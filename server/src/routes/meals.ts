@@ -21,12 +21,41 @@ interface IngredientRow {
   normalized_name: string;
   quantity: number;
   unit: string;
+  alternatives: string;
 }
 
 interface IngredientInput {
   name: string;
   quantity: number;
   unit?: string;
+  alternatives: string[];
+}
+
+export function sanitizeIngredientAlternatives(raw: unknown, baseIngredientName: string): string[] {
+  if (!Array.isArray(raw)) return [];
+  const baseNorm = normalizeIngredientName(baseIngredientName);
+  const seen = new Set<string>(baseNorm ? [baseNorm] : []);
+  const result: string[] = [];
+
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const trimmed = item.trim().replace(/\s+/g, ' ').slice(0, 80);
+    if (!trimmed) continue;
+    const norm = normalizeIngredientName(trimmed);
+    if (!norm || seen.has(norm)) continue;
+    seen.add(norm);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function parseStoredAlternatives(raw: string | null | undefined, baseName: string): string[] {
+  if (!raw) return [];
+  try {
+    return sanitizeIngredientAlternatives(JSON.parse(raw), baseName);
+  } catch {
+    return [];
+  }
 }
 
 function hydrateMeals(mealRows: MealRow[]) {
@@ -35,7 +64,7 @@ function hydrateMeals(mealRows: MealRow[]) {
   const placeholders = mealIds.map(() => '?').join(',');
   const ingredients = db
     .prepare(
-      `SELECT id, meal_id, name, normalized_name, quantity, unit
+      `SELECT id, meal_id, name, normalized_name, quantity, unit, alternatives
        FROM meal_ingredients
        WHERE meal_id IN (${placeholders})
        ORDER BY id ASC`
@@ -62,11 +91,12 @@ function hydrateMeals(mealRows: MealRow[]) {
       name: ing.name,
       quantity: ing.quantity,
       unit: ing.unit,
+      alternatives: parseStoredAlternatives(ing.alternatives, ing.name),
     })),
   }));
 }
 
-function parseMealPayload(body: Record<string, unknown>) {
+export function parseMealPayload(body: Record<string, unknown>) {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
   const rawImageUrl = typeof body.imageUrl === 'string' ? body.imageUrl.trim() : '';
@@ -97,7 +127,8 @@ function parseMealPayload(body: Record<string, unknown>) {
     const parsedQty = Number(rec.quantity);
     const quantity = Number.isFinite(parsedQty) && parsedQty > 0 ? parsedQty : 1;
     const unit = typeof rec.unit === 'string' ? rec.unit.trim() : '';
-    ingredients.push({ name: ingName, quantity, unit });
+    const alternatives = sanitizeIngredientAlternatives(rec.alternatives, ingName);
+    ingredients.push({ name: ingName, quantity, unit, alternatives });
   }
 
   return { name, notes, tags, imageUrl, ingredients };
@@ -123,7 +154,11 @@ mealsRouter.get('/', (req, res) => {
         m.name.toLowerCase().includes(search) ||
         m.notes.toLowerCase().includes(search) ||
         m.tags.some((t) => t.toLowerCase().includes(search)) ||
-        m.ingredients.some((i) => i.name.toLowerCase().includes(search))
+        m.ingredients.some(
+          (i) =>
+            i.name.toLowerCase().includes(search) ||
+            i.alternatives.some((alt) => alt.toLowerCase().includes(search))
+        )
     );
   }
 
@@ -151,10 +186,17 @@ mealsRouter.post('/', (req, res) => {
     const mealId = Number(result.lastInsertRowid);
 
     const insertIng = db.prepare(
-      'INSERT INTO meal_ingredients (meal_id, name, normalized_name, quantity, unit) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO meal_ingredients (meal_id, name, normalized_name, quantity, unit, alternatives) VALUES (?, ?, ?, ?, ?, ?)'
     );
     for (const ing of ingredients) {
-      insertIng.run(mealId, ing.name, normalizeIngredientName(ing.name), ing.quantity, ing.unit ?? '');
+      insertIng.run(
+        mealId,
+        ing.name,
+        normalizeIngredientName(ing.name),
+        ing.quantity,
+        ing.unit ?? '',
+        JSON.stringify(ing.alternatives)
+      );
     }
     return mealId;
   });
@@ -197,10 +239,17 @@ mealsRouter.put('/:id', (req, res) => {
 
     db.prepare('DELETE FROM meal_ingredients WHERE meal_id = ?').run(id);
     const insertIng = db.prepare(
-      'INSERT INTO meal_ingredients (meal_id, name, normalized_name, quantity, unit) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO meal_ingredients (meal_id, name, normalized_name, quantity, unit, alternatives) VALUES (?, ?, ?, ?, ?, ?)'
     );
     for (const ing of ingredients) {
-      insertIng.run(id, ing.name, normalizeIngredientName(ing.name), ing.quantity, ing.unit ?? '');
+      insertIng.run(
+        id,
+        ing.name,
+        normalizeIngredientName(ing.name),
+        ing.quantity,
+        ing.unit ?? '',
+        JSON.stringify(ing.alternatives)
+      );
     }
   });
 

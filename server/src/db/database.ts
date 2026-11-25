@@ -31,6 +31,7 @@ export function initializeDatabase(): void {
       normalized_name TEXT NOT NULL,
       quantity REAL NOT NULL,
       unit TEXT NOT NULL DEFAULT '',
+      alternatives TEXT NOT NULL DEFAULT '[]',
       FOREIGN KEY (meal_id) REFERENCES meals(id) ON DELETE CASCADE
     );
 
@@ -42,6 +43,7 @@ export function initializeDatabase(): void {
       normalized_name TEXT NOT NULL,
       quantity REAL NOT NULL,
       unit TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
       auto_include INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -150,6 +152,18 @@ export function initializeDatabase(): void {
   const mealCols = db.prepare('PRAGMA table_info(meals)').all() as Array<{ name: string }>;
   if (!mealCols.some((c) => c.name === 'image_url')) {
     db.exec("ALTER TABLE meals ADD COLUMN image_url TEXT NOT NULL DEFAULT ''");
+  }
+
+  const ingredientCols = db
+    .prepare('PRAGMA table_info(meal_ingredients)')
+    .all() as Array<{ name: string }>;
+  if (!ingredientCols.some((c) => c.name === 'alternatives')) {
+    db.exec("ALTER TABLE meal_ingredients ADD COLUMN alternatives TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  const stapleCols = db.prepare('PRAGMA table_info(staples)').all() as Array<{ name: string }>;
+  if (!stapleCols.some((c) => c.name === 'category')) {
+    db.exec("ALTER TABLE staples ADD COLUMN category TEXT NOT NULL DEFAULT ''");
   }
 
   // One-time safe migration from legacy single-account kroger_tokens to kroger_accounts

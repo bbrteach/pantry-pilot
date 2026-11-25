@@ -184,3 +184,44 @@ export function getSuggestedVariantsForIngredient(ingredientName: string): {
   }
   return { categoryLabel: null, options: [] };
 }
+
+export function resolveIngredientVariantOptions(
+  ingredientName: string,
+  manualAlternatives?: string[]
+): {
+  categoryLabel: string | null;
+  manualOptions: string[];
+  suggestedOptions: string[];
+} {
+  const baseName = ingredientName.trim();
+  const baseNorm = normalizeIngKey(baseName);
+  const seenManual = new Set<string>(baseNorm ? [baseNorm] : []);
+  const cleanManual: string[] = [];
+
+  for (const alt of manualAlternatives ?? []) {
+    const trimmed = alt.trim().replace(/\s+/g, ' ');
+    if (!trimmed) continue;
+    const norm = normalizeIngKey(trimmed);
+    if (!norm || seenManual.has(norm)) continue;
+    seenManual.add(norm);
+    cleanManual.push(trimmed);
+  }
+
+  const manualOptions = cleanManual.length > 0 && baseName ? [baseName, ...cleanManual] : [];
+  const { categoryLabel, options: autoOptions } = getSuggestedVariantsForIngredient(baseName);
+
+  if (manualOptions.length > 0) {
+    const suggestedOptions = autoOptions.filter((opt) => !seenManual.has(normalizeIngKey(opt)));
+    return {
+      categoryLabel,
+      manualOptions,
+      suggestedOptions,
+    };
+  }
+
+  return {
+    categoryLabel,
+    manualOptions: [],
+    suggestedOptions: autoOptions,
+  };
+}

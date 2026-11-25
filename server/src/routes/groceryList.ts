@@ -298,6 +298,145 @@ groceryListRouter.post('/items', (req, res) => {
   res.status(201).json(created);
 });
 
+export type AddStapleAction = 'added' | 'restored' | 'incremented';
+
+export function addStapleToGroceryList(stapleId: number) {
+  const staple = db
+    .prepare('SELECT id, name, normalized_name, quantity, unit FROM staples WHERE id = ?')
+    .get(stapleId) as
+    | {
+        id: number;
+        name: string;
+        normalized_name: string;
+        quantity: number;
+        unit: string;
+      }
+    | undefined;
+
+  if (!staple) {
+    return null;
+  }
+
+  const stapleQty =
+    Number.isFinite(staple.quantity) && staple.quantity > 0 ? roundQuantity(staple.quantity) : 1;
+  const stapleUnit = normalizeUnit(staple.unit || '');
+  const stapleBreakdown: UnitAmount[] = [{ quantity: stapleQty, unit: stapleUnit }];
+  const stapleCartDelta = computeDefaultCartQuantity(stapleBreakdown);
+  const normalizedName = staple.normalized_name || normalizeIngredientName(staple.name);
+
+  const upsertTx = db.transaction((): { action: AddStapleAction; itemId: number } => {
+    const existing = db
+      .prepare(
+        `SELECT id, name, normalized_name, unit_breakdown, sources, is_checked, is_ad_hoc, cart_quantity
+         FROM grocery_list_items
+         WHERE normalized_name = ?
+         ORDER BY is_checked ASC, id ASC
+         LIMIT 1`
+      )
+      .get(normalizedName) as
+      | {
+          id: number;
+          name: string;
+          normalized_name: string;
+          unit_breakdown: string;
+          sources: string;
+          is_checked: number;
+          is_ad_hoc: number;
+          cart_quantity: number;
+        }
+      | undefined;
+
+    if (!existing) {
+      const result = db
+        .prepare(
+          `INSERT INTO grocery_list_items
+            (name, normalized_name, unit_breakdown, sources, is_checked, is_ad_hoc, cart_quantity)
+           VALUES (?, ?, ?, ?, 0, 0, ?)`
+        )
+        .run(
+          staple.name,
+          normalizedName,
+          JSON.stringify(stapleBreakdown),
+          JSON.stringify(['Staple']),
+          stapleCartDelta
+        );
+      return { action: 'added', itemId: Number(result.lastInsertRowid) };
+    }
+
+    const existingSources = JSON.parse(existing.sources || '[]') as string[];
+    const nextSources = existingSources.includes('Staple')
+      ? existingSources
+      : [...existingSources, 'Staple'];
+
+    if (existing.is_checked) {
+      db.prepare(
+        `UPDATE grocery_list_items
+         SET unit_breakdown = ?, sources = ?, is_checked = 0, cart_quantity = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(
+        JSON.stringify(stapleBreakdown),
+        JSON.stringify(nextSources),
+        stapleCartDelta,
+        existing.id
+      );
+      return { action: 'restored', itemId: existing.id };
+    }
+
+    const existingBreakdown = JSON.parse(existing.unit_breakdown || '[]') as UnitAmount[];
+    const mergedBreakdown = existingBreakdown.map((entry) => ({
+      quantity: roundQuantity(entry.quantity),
+      unit: normalizeUnit(entry.unit || ''),
+    }));
+    const matchingIdx = mergedBreakdown.findIndex((entry) => entry.unit === stapleUnit);
+    if (matchingIdx >= 0) {
+      mergedBreakdown[matchingIdx] = {
+        ...mergedBreakdown[matchingIdx],
+        quantity: roundQuantity(mergedBreakdown[matchingIdx].quantity + stapleQty),
+      };
+    } else {
+      mergedBreakdown.push({ quantity: stapleQty, unit: stapleUnit });
+    }
+
+    const nextCartQuantity = Math.max(
+      computeDefaultCartQuantity(mergedBreakdown),
+      Math.max(1, existing.cart_quantity) + stapleCartDelta
+    );
+
+    db.prepare(
+      `UPDATE grocery_list_items
+       SET unit_breakdown = ?, sources = ?, cart_quantity = ?, updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(
+      JSON.stringify(mergedBreakdown),
+      JSON.stringify(nextSources),
+      nextCartQuantity,
+      existing.id
+    );
+    return { action: 'incremented', itemId: existing.id };
+  });
+
+  const { action, itemId } = upsertTx();
+  const items = fetchGroceryList();
+  const item = items.find((entry) => entry.id === itemId)!;
+  return { action, item, items };
+}
+
+groceryListRouter.post('/staples/:stapleId', (req, res) => {
+  const stapleId = Number(req.params.stapleId);
+  if (!Number.isInteger(stapleId) || stapleId <= 0) {
+    res.status(400).json({ error: 'Invalid staple ID.' });
+    return;
+  }
+
+  const result = addStapleToGroceryList(stapleId);
+  if (!result) {
+    res.status(404).json({ error: 'Staple not found.' });
+    return;
+  }
+
+  res.status(result.action === 'added' ? 201 : 200).json(result);
+});
+
 groceryListRouter.patch('/items/:id', (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {

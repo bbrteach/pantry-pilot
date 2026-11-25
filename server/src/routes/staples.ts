@@ -10,9 +10,15 @@ interface StapleRow {
   normalized_name: string;
   quantity: number;
   unit: string;
+  category: string;
   auto_include: number;
   created_at: string;
   updated_at: string;
+}
+
+function sanitizeCategory(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().replace(/\s+/g, ' ').slice(0, 40);
 }
 
 function mapStaple(row: StapleRow) {
@@ -21,6 +27,7 @@ function mapStaple(row: StapleRow) {
     name: row.name,
     quantity: row.quantity,
     unit: row.unit,
+    category: row.category || '',
     autoInclude: Boolean(row.auto_include),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -30,7 +37,7 @@ function mapStaple(row: StapleRow) {
 staplesRouter.get('/', (_req, res) => {
   const rows = db
     .prepare(
-      'SELECT id, name, normalized_name, quantity, unit, auto_include, created_at, updated_at FROM staples ORDER BY auto_include DESC, name COLLATE NOCASE ASC'
+      'SELECT id, name, normalized_name, quantity, unit, category, auto_include, created_at, updated_at FROM staples ORDER BY auto_include DESC, name COLLATE NOCASE ASC'
     )
     .all() as StapleRow[];
 
@@ -48,16 +55,19 @@ staplesRouter.post('/', (req, res) => {
   const parsedQty = Number(body.quantity);
   const quantity = Number.isFinite(parsedQty) && parsedQty > 0 ? parsedQty : 1;
   const unit = typeof body.unit === 'string' ? body.unit.trim() : '';
+  const category = sanitizeCategory(body.category);
   const autoInclude = body.autoInclude === undefined ? true : Boolean(body.autoInclude);
 
   const result = db
     .prepare(
-      "INSERT INTO staples (name, normalized_name, quantity, unit, auto_include, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'))"
+      "INSERT INTO staples (name, normalized_name, quantity, unit, category, auto_include, updated_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
     )
-    .run(name, normalizeIngredientName(name), quantity, unit, autoInclude ? 1 : 0);
+    .run(name, normalizeIngredientName(name), quantity, unit, category, autoInclude ? 1 : 0);
 
   const row = db
-    .prepare('SELECT id, name, normalized_name, quantity, unit, auto_include, created_at, updated_at FROM staples WHERE id = ?')
+    .prepare(
+      'SELECT id, name, normalized_name, quantity, unit, category, auto_include, created_at, updated_at FROM staples WHERE id = ?'
+    )
     .get(Number(result.lastInsertRowid)) as StapleRow;
 
   res.status(201).json(mapStaple(row));
@@ -71,7 +81,9 @@ staplesRouter.put('/:id', (req, res) => {
   }
 
   const existing = db
-    .prepare('SELECT id, name, normalized_name, quantity, unit, auto_include, created_at, updated_at FROM staples WHERE id = ?')
+    .prepare(
+      'SELECT id, name, normalized_name, quantity, unit, category, auto_include, created_at, updated_at FROM staples WHERE id = ?'
+    )
     .get(id) as StapleRow | undefined;
 
   if (!existing) {
@@ -89,15 +101,18 @@ staplesRouter.put('/:id', (req, res) => {
   const parsedQty = body.quantity !== undefined ? Number(body.quantity) : existing.quantity;
   const quantity = Number.isFinite(parsedQty) && parsedQty > 0 ? parsedQty : existing.quantity;
   const unit = typeof body.unit === 'string' ? body.unit.trim() : existing.unit;
+  const category = body.category !== undefined ? sanitizeCategory(body.category) : existing.category;
   const autoInclude =
     body.autoInclude !== undefined ? (body.autoInclude ? 1 : 0) : existing.auto_include;
 
   db.prepare(
-    "UPDATE staples SET name = ?, normalized_name = ?, quantity = ?, unit = ?, auto_include = ?, updated_at = datetime('now') WHERE id = ?"
-  ).run(name, normalizeIngredientName(name), quantity, unit, autoInclude, id);
+    "UPDATE staples SET name = ?, normalized_name = ?, quantity = ?, unit = ?, category = ?, auto_include = ?, updated_at = datetime('now') WHERE id = ?"
+  ).run(name, normalizeIngredientName(name), quantity, unit, category, autoInclude, id);
 
   const updated = db
-    .prepare('SELECT id, name, normalized_name, quantity, unit, auto_include, created_at, updated_at FROM staples WHERE id = ?')
+    .prepare(
+      'SELECT id, name, normalized_name, quantity, unit, category, auto_include, created_at, updated_at FROM staples WHERE id = ?'
+    )
     .get(id) as StapleRow;
 
   res.json(mapStaple(updated));

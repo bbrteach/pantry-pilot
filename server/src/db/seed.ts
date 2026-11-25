@@ -12,6 +12,7 @@ interface SeedStaple {
   name: string;
   quantity: number;
   unit: string;
+  category: string;
   autoInclude: boolean;
 }
 
@@ -142,14 +143,14 @@ const SAMPLE_MEALS: SeedMeal[] = [
 ];
 
 const SAMPLE_STAPLES: SeedStaple[] = [
-  { name: 'Bottled Water', quantity: 1, unit: 'case', autoInclude: true },
-  { name: 'Whole Milk', quantity: 1, unit: 'gallon', autoInclude: true },
-  { name: 'Large Eggs', quantity: 1, unit: 'dozen', autoInclude: true },
-  { name: 'Paper Towels', quantity: 1, unit: 'pack', autoInclude: true },
-  { name: 'Bananas', quantity: 1, unit: 'bunch', autoInclude: true },
-  { name: 'Whole Wheat Bread', quantity: 1, unit: 'loaf', autoInclude: true },
-  { name: 'Salted Butter', quantity: 1, unit: 'box', autoInclude: false },
-  { name: 'Coffee Beans', quantity: 1, unit: 'bag', autoInclude: false },
+  { name: 'Bottled Water', quantity: 1, unit: 'case', category: 'Beverages', autoInclude: true },
+  { name: 'Whole Milk', quantity: 1, unit: 'gallon', category: 'Dairy & Eggs', autoInclude: true },
+  { name: 'Large Eggs', quantity: 1, unit: 'dozen', category: 'Dairy & Eggs', autoInclude: true },
+  { name: 'Paper Towels', quantity: 1, unit: 'pack', category: 'Household', autoInclude: true },
+  { name: 'Bananas', quantity: 1, unit: 'bunch', category: 'Produce', autoInclude: true },
+  { name: 'Whole Wheat Bread', quantity: 1, unit: 'loaf', category: 'Bakery', autoInclude: true },
+  { name: 'Salted Butter', quantity: 1, unit: 'box', category: 'Dairy & Eggs', autoInclude: false },
+  { name: 'Coffee Beans', quantity: 1, unit: 'bag', category: 'Beverages', autoInclude: false },
 ];
 
 export function seedDatabaseIfEmpty(): void {
@@ -185,7 +186,7 @@ export function seedDatabaseIfEmpty(): void {
 
   if (stapleCount.count === 0) {
     const insertStaple = db.prepare(
-      'INSERT INTO staples (name, normalized_name, quantity, unit, auto_include) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO staples (name, normalized_name, quantity, unit, category, auto_include) VALUES (?, ?, ?, ?, ?, ?)'
     );
 
     const seedStaplesTx = db.transaction(() => {
@@ -195,6 +196,7 @@ export function seedDatabaseIfEmpty(): void {
           normalizeIngredientName(staple.name),
           staple.quantity,
           staple.unit,
+          staple.category,
           staple.autoInclude ? 1 : 0
         );
       }

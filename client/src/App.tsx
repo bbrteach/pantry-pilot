@@ -261,6 +261,25 @@ export function App() {
     showToast('Staple removed');
   };
 
+  const handleAddStapleToList = async (staple: Staple) => {
+    try {
+      const res = await api.addStapleToGroceryList(staple.id);
+      setGroceryItems(res.items);
+      if (res.action === 'added') {
+        showToast(`Added "${res.item.name}" (${res.item.quantityDisplay}) to list/cart`);
+      } else if (res.action === 'restored') {
+        showToast(`Moved "${res.item.name}" back to active list/cart`);
+      } else {
+        showToast(`Updated "${res.item.name}" on list/cart (${res.item.quantityDisplay})`);
+      }
+      if (krogerStatus?.configured && krogerStatus?.store && res.item.productMapping) {
+        void runSavingsCheck(true);
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to add staple to list');
+    }
+  };
+
   // Planner & 2-Week Schedule handlers
   const handleTogglePlanMeal = async (mealId: number) => {
     const nextIds = selectedMealIds.includes(mealId)
@@ -622,9 +641,11 @@ export function App() {
           {activeTab === 'staples' && (
             <StaplesView
               staples={staples}
+              groceryItems={groceryItems}
               onCreateStaple={handleCreateStaple}
               onUpdateStaple={handleUpdateStaple}
               onDeleteStaple={handleDeleteStaple}
+              onAddStapleToList={handleAddStapleToList}
             />
           )}
 

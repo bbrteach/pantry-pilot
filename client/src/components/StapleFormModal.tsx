@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { Staple, StaplePayload } from '../types';
+import { inferStapleCategory, STAPLE_CATEGORIES } from '../utils/stapleCategories';
 
 interface StapleFormModalProps {
   isOpen: boolean;
@@ -18,6 +19,7 @@ export function StapleFormModal({
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [unit, setUnit] = useState('');
+  const [category, setCategory] = useState('');
   const [autoInclude, setAutoInclude] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -29,16 +31,20 @@ export function StapleFormModal({
       setName(initialStaple.name);
       setQuantity(String(initialStaple.quantity));
       setUnit(initialStaple.unit);
+      setCategory(initialStaple.category || '');
       setAutoInclude(initialStaple.autoInclude);
     } else {
       setName('');
       setQuantity('1');
       setUnit('');
+      setCategory('');
       setAutoInclude(true);
     }
   }, [isOpen, initialStaple]);
 
   if (!isOpen) return null;
+
+  const detectedCategory = name.trim() ? inferStapleCategory(name) : '';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,6 +68,7 @@ export function StapleFormModal({
         name: trimmed,
         quantity: parsedQty,
         unit: unit.trim(),
+        category: category.trim(),
         autoInclude,
       });
       onClose();
@@ -79,7 +86,7 @@ export function StapleFormModal({
       aria-modal="true"
       aria-labelledby="staple-modal-title"
     >
-      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl border border-[#E6E1D6] shadow-2xl overflow-hidden">
+      <div className="bg-white w-full sm:max-w-md max-h-[92vh] sm:max-h-[88vh] rounded-t-3xl sm:rounded-3xl border border-[#E6E1D6] shadow-2xl flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#E6E1D6]">
           <h2 id="staple-modal-title" className="font-display text-xl font-bold text-[#1A241E]">
             {initialStaple ? 'Edit Staple' : 'Add Recurring Staple'}
@@ -94,7 +101,7 @@ export function StapleFormModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
           {error && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-medium">
               {error}
@@ -145,6 +152,50 @@ export function StapleFormModal({
                 className="w-full h-11 px-3.5 rounded-xl border border-[#D8D2C5] bg-[#FAF8F4] text-[#1A241E] focus:bg-white focus:border-[#1B5E42] focus:outline-none"
               />
             </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label htmlFor="staple-category-input" className="block text-sm font-semibold text-[#1A241E]">
+                Category <span className="font-normal text-[#5C6961]">(optional)</span>
+              </label>
+              {!category.trim() && detectedCategory && (
+                <span className="text-[11px] font-medium text-[#5C6961]">
+                  Auto: <span className="font-semibold text-[#1B5E42]">{detectedCategory}</span>
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {STAPLE_CATEGORIES.map((cat) => {
+                const active = category.trim().toLowerCase() === cat.toLowerCase();
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setCategory(active ? '' : cat)}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+                      active
+                        ? 'bg-[#1B5E42] text-white border-[#1B5E42]'
+                        : 'bg-[#FAF8F4] text-[#5C6961] border-[#E6E1D6] hover:border-[#1B5E42]/40'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
+            <input
+              id="staple-category-input"
+              type="text"
+              placeholder={
+                detectedCategory
+                  ? `Leave blank for ${detectedCategory}, or type custom...`
+                  : 'e.g., Dairy & Eggs, Household, Baby...'
+              }
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full h-10 px-3 rounded-xl border border-[#D8D2C5] bg-[#FAF8F4] text-xs text-[#1A241E] focus:bg-white focus:border-[#1B5E42] focus:outline-none"
+            />
           </div>
 
           <label className="flex items-center justify-between p-3.5 rounded-2xl bg-[#FAF8F4] border border-[#E6E1D6] cursor-pointer">

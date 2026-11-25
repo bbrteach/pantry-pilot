@@ -3,6 +3,7 @@ export interface Ingredient {
   name: string;
   quantity: number;
   unit: string;
+  alternatives?: string[];
 }
 
 export interface Meal {
@@ -25,6 +26,7 @@ export interface MealPayload {
     name: string;
     quantity: number;
     unit: string;
+    alternatives?: string[];
   }>;
 }
 
@@ -33,6 +35,7 @@ export interface Staple {
   name: string;
   quantity: number;
   unit: string;
+  category: string;
   autoInclude: boolean;
   createdAt: string;
   updatedAt: string;
@@ -42,6 +45,7 @@ export interface StaplePayload {
   name: string;
   quantity: number;
   unit: string;
+  category?: string;
   autoInclude: boolean;
 }
 

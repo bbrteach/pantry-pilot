@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, ImagePlus, Link2, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeftRight, Camera, ImagePlus, Link2, Plus, Trash2, X } from 'lucide-react';
 import type { Meal, MealPayload } from '../types';
 import { api } from '../api/client';
 import { compressImageFile } from '../utils/image';
+import { normalizeIngKey } from '../utils/variants';
 
 const SUGGESTED_TAGS = [
   'Quick',
@@ -22,6 +23,7 @@ interface IngredientRow {
   name: string;
   quantity: string;
   unit: string;
+  alternatives: string[];
 }
 
 interface MealFormModalProps {
@@ -31,13 +33,28 @@ interface MealFormModalProps {
   onSubmit: (payload: MealPayload) => Promise<void>;
 }
 
-function makeRow(name = '', quantity = '1', unit = ''): IngredientRow {
+function makeRow(name = '', quantity = '1', unit = '', alternatives: string[] = []): IngredientRow {
   return {
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name,
     quantity,
     unit,
+    alternatives: [...alternatives],
   };
+}
+
+function appendUniqueAlternative(
+  existing: string[],
+  baseName: string,
+  candidate: string
+): string[] {
+  const trimmed = candidate.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return existing;
+  const candNorm = normalizeIngKey(trimmed);
+  const baseNorm = normalizeIngKey(baseName);
+  if (!candNorm || (baseNorm && candNorm === baseNorm)) return existing;
+  if (existing.some((alt) => normalizeIngKey(alt) === candNorm)) return existing;
+  return [...existing, trimmed];
 }
 
 export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFormModalProps) {
@@ -49,6 +66,8 @@ export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFo
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [customTag, setCustomTag] = useState('');
   const [ingredients, setIngredients] = useState<IngredientRow[]>([makeRow()]);
+  const [selectedAltRowKey, setSelectedAltRowKey] = useState<string | null>(null);
+  const [altDraft, setAltDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -59,6 +78,8 @@ export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFo
     setCustomTag('');
     setShowUrlInput(false);
     setUploadingPhoto(false);
+    setSelectedAltRowKey(null);
+    setAltDraft('');
     if (initialMeal) {
       setName(initialMeal.name);
       setNotes(initialMeal.notes);
@@ -67,7 +88,7 @@ export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFo
       setIngredients(
         initialMeal.ingredients.length > 0
           ? initialMeal.ingredients.map((ing) =>
-              makeRow(ing.name, String(ing.quantity), ing.unit)
+              makeRow(ing.name, String(ing.quantity), ing.unit, ing.alternatives ?? [])
             )
           : [makeRow()]
       );
@@ -116,7 +137,11 @@ export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFo
     setCustomTag('');
   };
 
-  const updateIngredient = (key: string, field: keyof IngredientRow, value: string) => {
+  const updateIngredient = (
+    key: string,
+    field: 'name' | 'quantity' | 'unit',
+    value: string
+  ) => {
     setIngredients((prev) =>
       prev.map((row) => (row.key === key ? { ...row, [field]: value } : row))
     );
@@ -128,6 +153,52 @@ export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFo
 
   const removeIngredientRow = (key: string) => {
     setIngredients((prev) => (prev.length > 1 ? prev.filter((r) => r.key !== key) : prev));
+    if (selectedAltRowKey === key) {
+      setSelectedAltRowKey(null);
+      setAltDraft('');
+    }
+  };
+
+  const addAlternativeToRow = (rowKey: string, value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setIngredients((prev) =>
+      prev.map((row) =>
+        row.key === rowKey
+          ? {
+              ...row,
+              alternatives: appendUniqueAlternative(row.alternatives, row.name, trimmed),
+            }
+          : row
+      )
+    );
+    setAltDraft('');
+  };
+
+  const removeAlternativeFromRow = (rowKey: string, altToRemove: string) => {
+    setIngredients((prev) =>
+      prev.map((row) =>
+        row.key === rowKey
+          ? {
+              ...row,
+              alternatives: row.alternatives.filter((a) => a !== altToRemove),
+            }
+          : row
+      )
+    );
+  };
+
+  const toggleVariantEditor = (rowKey: string) => {
+    if (selectedAltRowKey && altDraft.trim()) {
+      addAlternativeToRow(selectedAltRowKey, altDraft);
+    }
+    if (selectedAltRowKey === rowKey) {
+      setSelectedAltRowKey(null);
+      setAltDraft('');
+    } else {
+      setSelectedAltRowKey(rowKey);
+      setAltDraft('');
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -141,11 +212,22 @@ export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFo
     }
 
     const parsedIngredients = ingredients
-      .map((row) => ({
-        name: row.name.trim(),
-        quantity: Number(row.quantity),
-        unit: row.unit.trim(),
-      }))
+      .map((row) => {
+        const cleanName = row.name.trim();
+        const withDraft =
+          selectedAltRowKey === row.key && altDraft.trim()
+            ? appendUniqueAlternative(row.alternatives, cleanName, altDraft)
+            : row.alternatives;
+        const cleanAlternatives = withDraft.filter(
+          (alt) => normalizeIngKey(alt) !== normalizeIngKey(cleanName)
+        );
+        return {
+          name: cleanName,
+          quantity: Number(row.quantity),
+          unit: row.unit.trim(),
+          alternatives: cleanAlternatives,
+        };
+      })
       .filter((row) => row.name.length > 0);
 
     if (parsedIngredients.length === 0) {
@@ -371,14 +453,19 @@ export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFo
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-[#1A241E]">
-                Ingredients ({ingredients.length})
-              </span>
+              <div>
+                <span className="text-sm font-semibold text-[#1A241E]">
+                  Ingredients ({ingredients.length})
+                </span>
+                <p className="text-[11px] text-[#5C6961]">
+                  Tap <span className="font-semibold text-[#8A421A]">Variants</span> on any ingredient to add one-tap swap options
+                </p>
+              </div>
               <button
                 type="button"
                 id="add-ingredient-row-btn"
                 onClick={addIngredientRow}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-[#1B5E42] hover:text-[#144A33] px-2.5 py-1.5 rounded-lg bg-[#EBF4EF] hover:bg-[#DCECE3] transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-[#1B5E42] hover:text-[#144A33] px-2.5 py-1.5 rounded-lg bg-[#EBF4EF] hover:bg-[#DCECE3] transition-colors shrink-0 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Add Ingredient
@@ -386,49 +473,161 @@ export function MealFormModal({ isOpen, initialMeal, onClose, onSubmit }: MealFo
             </div>
 
             <div className="space-y-2.5">
-              {ingredients.map((row, idx) => (
-                <div
-                  key={row.key}
-                  className="grid grid-cols-[1fr_72px_84px_36px] gap-2 items-center"
-                >
-                  <input
-                    id={`ingredient-name-${idx}`}
-                    type="text"
-                    placeholder="Ingredient name"
-                    value={row.name}
-                    onChange={(e) => updateIngredient(row.key, 'name', e.target.value)}
-                    className="h-10 px-3 rounded-xl border border-[#D8D2C5] bg-[#FAF8F4] text-sm text-[#1A241E] focus:bg-white focus:border-[#1B5E42] focus:outline-none min-w-0"
-                  />
-                  <input
-                    id={`ingredient-qty-${idx}`}
-                    type="number"
-                    step="any"
-                    min="0.01"
-                    placeholder="Qty"
-                    value={row.quantity}
-                    onChange={(e) => updateIngredient(row.key, 'quantity', e.target.value)}
-                    className="h-10 px-2.5 rounded-xl border border-[#D8D2C5] bg-[#FAF8F4] text-sm text-[#1A241E] tabular-nums focus:bg-white focus:border-[#1B5E42] focus:outline-none min-w-0"
-                  />
-                  <input
-                    id={`ingredient-unit-${idx}`}
-                    type="text"
-                    list="common-units-list"
-                    placeholder="Unit"
-                    value={row.unit}
-                    onChange={(e) => updateIngredient(row.key, 'unit', e.target.value)}
-                    className="h-10 px-2.5 rounded-xl border border-[#D8D2C5] bg-[#FAF8F4] text-sm text-[#1A241E] focus:bg-white focus:border-[#1B5E42] focus:outline-none min-w-0"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeIngredientRow(row.key)}
-                    disabled={ingredients.length === 1}
-                    aria-label="Remove ingredient row"
-                    className="h-10 w-9 rounded-xl flex items-center justify-center text-[#85918A] hover:text-red-600 hover:bg-red-50 disabled:opacity-30 transition-colors cursor-pointer"
+              {ingredients.map((row, idx) => {
+                const isEditingVariants = selectedAltRowKey === row.key;
+                const hasVariants = row.alternatives.length > 0;
+
+                return (
+                  <div
+                    key={row.key}
+                    data-testid={`meal-ingredient-row-${idx}`}
+                    className={`rounded-2xl border p-2.5 space-y-2 transition-colors ${
+                      isEditingVariants
+                        ? 'border-[#F0CFAF] bg-[#FDF3EB]/50'
+                        : 'border-[#ECE7DC] bg-[#FAF8F4]/55'
+                    }`}
                   >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
+                    <div className="grid grid-cols-[1fr_68px_80px_36px] gap-2 items-center">
+                      <input
+                        id={`ingredient-name-${idx}`}
+                        type="text"
+                        placeholder="Ingredient name"
+                        value={row.name}
+                        onChange={(e) => updateIngredient(row.key, 'name', e.target.value)}
+                        className="h-10 px-3 rounded-xl border border-[#D8D2C5] bg-white text-sm text-[#1A241E] focus:border-[#1B5E42] focus:outline-none min-w-0"
+                      />
+                      <input
+                        id={`ingredient-qty-${idx}`}
+                        type="number"
+                        step="any"
+                        min="0.01"
+                        placeholder="Qty"
+                        value={row.quantity}
+                        onChange={(e) => updateIngredient(row.key, 'quantity', e.target.value)}
+                        className="h-10 px-2 rounded-xl border border-[#D8D2C5] bg-white text-sm text-[#1A241E] tabular-nums focus:border-[#1B5E42] focus:outline-none min-w-0"
+                      />
+                      <input
+                        id={`ingredient-unit-${idx}`}
+                        type="text"
+                        list="common-units-list"
+                        placeholder="Unit"
+                        value={row.unit}
+                        onChange={(e) => updateIngredient(row.key, 'unit', e.target.value)}
+                        className="h-10 px-2.5 rounded-xl border border-[#D8D2C5] bg-white text-sm text-[#1A241E] focus:border-[#1B5E42] focus:outline-none min-w-0"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeIngredientRow(row.key)}
+                        disabled={ingredients.length === 1}
+                        aria-label="Remove ingredient row"
+                        className="h-10 w-9 rounded-xl flex items-center justify-center text-[#85918A] hover:text-red-600 hover:bg-red-50 disabled:opacity-30 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Swappable variants toggle & preview chips */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        data-testid={`ingredient-variants-toggle-${idx}`}
+                        onClick={() => toggleVariantEditor(row.key)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors cursor-pointer ${
+                          isEditingVariants
+                            ? 'bg-[#B85D2B] text-white border-[#B85D2B]'
+                            : hasVariants
+                            ? 'bg-[#FDF3EB] text-[#8A421A] border-[#F0CFAF] hover:bg-[#F9E6D4]'
+                            : 'bg-white text-[#5C6961] border-[#E6E1D6] hover:border-[#B85D2B]/50 hover:text-[#8A421A]'
+                        }`}
+                      >
+                        <ArrowLeftRight className="w-3 h-3" />
+                        <span>
+                          {isEditingVariants
+                            ? 'Done editing variants'
+                            : hasVariants
+                            ? `Variants (${row.alternatives.length})`
+                            : '+ Add variants'}
+                        </span>
+                      </button>
+
+                      {!isEditingVariants &&
+                        row.alternatives.map((alt) => (
+                          <span
+                            key={alt}
+                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-white border border-[#F0CFAF] text-[#8A421A]"
+                          >
+                            {alt}
+                          </span>
+                        ))}
+                    </div>
+
+                    {/* Expanded inline editor for this ingredient's manual variants */}
+                    {isEditingVariants && (
+                      <div
+                        data-testid={`ingredient-variants-editor-${idx}`}
+                        className="pt-1.5 border-t border-[#F0CFAF]/80 space-y-2"
+                      >
+                        <p className="text-[11px] text-[#874823]">
+                          Add swappable variants for{' '}
+                          <span className="font-bold text-[#1A241E]">
+                            {row.name.trim() || 'this ingredient'}
+                          </span>
+                          . These appear first as one-tap options when customizing a planned meal.
+                        </p>
+
+                        {row.alternatives.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {row.alternatives.map((alt) => (
+                              <span
+                                key={alt}
+                                data-testid={`ingredient-alt-chip-${idx}-${alt}`}
+                                className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-[11px] font-semibold bg-white border border-[#F0CFAF] text-[#8A421A]"
+                              >
+                                <span>{alt}</span>
+                                <button
+                                  type="button"
+                                  aria-label={`Remove variant ${alt}`}
+                                  onClick={() => removeAlternativeFromRow(row.key, alt)}
+                                  className="w-4 h-4 rounded-full hover:bg-[#FDF3EB] flex items-center justify-center cursor-pointer"
+                                >
+                                  <X className="w-2.5 h-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex gap-1.5">
+                          <input
+                            id={`ingredient-alt-input-${idx}`}
+                            type="text"
+                            placeholder={`Add variant for ${row.name.trim() || 'ingredient'} (e.g., Alfredo Sauce)...`}
+                            value={altDraft}
+                            onChange={(e) => setAltDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                addAlternativeToRow(row.key, altDraft);
+                              }
+                            }}
+                            className="flex-1 h-9 px-3 rounded-xl border border-[#E2C4A5] bg-white text-xs text-[#1A241E] placeholder:text-[#8A948D] focus:border-[#B85D2B] focus:outline-none min-w-0"
+                          />
+                          <button
+                            type="button"
+                            data-testid={`ingredient-alt-add-${idx}`}
+                            disabled={!altDraft.trim()}
+                            onClick={() => addAlternativeToRow(row.key, altDraft)}
+                            className="h-9 px-3 rounded-xl bg-[#B85D2B] text-white hover:bg-[#9B4D22] disabled:opacity-45 text-xs font-semibold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               <datalist id="common-units-list">
                 {COMMON_UNITS.filter(Boolean).map((u) => (
                   <option key={u} value={u} />

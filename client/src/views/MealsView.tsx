@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Edit3, Plus, Search, Trash2, Utensils, X } from 'lucide-react';
+import { ArrowLeftRight, Edit3, Plus, Search, Trash2, Utensils, X } from 'lucide-react';
 import type { Meal, MealPayload } from '../types';
 import { MealFormModal } from '../components/MealFormModal';
 
@@ -44,7 +44,11 @@ export function MealsView({
         meal.name.toLowerCase().includes(q) ||
         meal.notes.toLowerCase().includes(q) ||
         meal.tags.some((t) => t.toLowerCase().includes(q)) ||
-        meal.ingredients.some((i) => i.name.toLowerCase().includes(q))
+        meal.ingredients.some(
+          (i) =>
+            i.name.toLowerCase().includes(q) ||
+            (i.alternatives ?? []).some((alt) => alt.toLowerCase().includes(q))
+        )
       );
     });
   }, [meals, search, selectedTag]);
@@ -260,18 +264,32 @@ export function MealsView({
                     Ingredients ({meal.ingredients.length})
                   </p>
                   <ul className="flex flex-wrap gap-1.5">
-                    {meal.ingredients.slice(0, 6).map((ing, idx) => (
-                      <li
-                        key={`${meal.id}-${ing.name}-${idx}`}
-                        className="text-xs bg-[#FAF8F4] border border-[#ECE7DC] text-[#39453E] px-2 py-0.5 rounded-lg"
-                      >
-                        <span className="font-semibold tabular-nums">
-                          {ing.quantity}
-                          {ing.unit ? ` ${ing.unit}` : ''}
-                        </span>{' '}
-                        {ing.name}
-                      </li>
-                    ))}
+                    {meal.ingredients.slice(0, 6).map((ing, idx) => {
+                      const altCount = ing.alternatives?.length ?? 0;
+                      return (
+                        <li
+                          key={`${meal.id}-${ing.name}-${idx}`}
+                          title={
+                            altCount > 0
+                              ? `Swappable variants: ${ing.alternatives!.join(', ')}`
+                              : undefined
+                          }
+                          className="inline-flex items-center gap-1 text-xs bg-[#FAF8F4] border border-[#ECE7DC] text-[#39453E] px-2 py-0.5 rounded-lg"
+                        >
+                          <span className="font-semibold tabular-nums">
+                            {ing.quantity}
+                            {ing.unit ? ` ${ing.unit}` : ''}
+                          </span>{' '}
+                          <span>{ing.name}</span>
+                          {altCount > 0 && (
+                            <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-[#FDF3EB] border border-[#F0CFAF] text-[10px] font-bold text-[#8A421A] tabular-nums">
+                              <ArrowLeftRight className="w-2.5 h-2.5" />
+                              {altCount}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
                     {meal.ingredients.length > 6 && (
                       <li className="text-xs text-[#5C6961] px-1.5 py-0.5 font-medium">
                         +{meal.ingredients.length - 6} more

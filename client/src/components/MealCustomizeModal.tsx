@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Meal, MealCustomization, MealSideItem, QuickSidePreset } from '../types';
-import { getSuggestedVariantsForIngredient, normalizeIngKey } from '../utils/variants';
+import { normalizeIngKey, resolveIngredientVariantOptions } from '../utils/variants';
 
 interface MealCustomizeModalProps {
   meal: Meal | null;
@@ -638,8 +638,14 @@ export function MealCustomizeModal({
               {meal.ingredients.map((ing, idx) => {
                 const key = normalizeIngKey(ing.name);
                 const swappedTo = swaps[key];
-                const { categoryLabel, options } = getSuggestedVariantsForIngredient(ing.name);
+                const { categoryLabel, manualOptions, suggestedOptions } =
+                  resolveIngredientVariantOptions(ing.name, ing.alternatives);
+                const hasManual = manualOptions.length > 0;
                 const isCustomEditing = editingIngKey === key;
+
+                const isOptionActive = (option: string) =>
+                  (swappedTo && normalizeIngKey(swappedTo) === normalizeIngKey(option)) ||
+                  (!swappedTo && normalizeIngKey(ing.name) === normalizeIngKey(option));
 
                 return (
                   <div
@@ -665,6 +671,11 @@ export function MealCustomizeModal({
                           {swappedTo && (
                             <span className="text-xs sm:text-sm font-bold text-[#8A421A]">
                               → {swappedTo}
+                            </span>
+                          )}
+                          {hasManual && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FDF3EB] border border-[#F0CFAF] text-[#8A421A]">
+                              Your Variants
                             </span>
                           )}
                           {categoryLabel && (
@@ -702,12 +713,10 @@ export function MealCustomizeModal({
                       </div>
                     </div>
 
-                    {options.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {options.map((option) => {
-                          const isCurrent =
-                            (swappedTo && normalizeIngKey(swappedTo) === normalizeIngKey(option)) ||
-                            (!swappedTo && normalizeIngKey(ing.name) === normalizeIngKey(option));
+                    {hasManual && (
+                      <div className="flex flex-wrap gap-1.5" data-testid={`manual-variants-${key}`}>
+                        {manualOptions.map((option) => {
+                          const isCurrent = isOptionActive(option);
                           return (
                             <button
                               key={option}
@@ -717,13 +726,43 @@ export function MealCustomizeModal({
                               className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
                                 isCurrent
                                   ? 'bg-[#1B5E42] text-white border-[#1B5E42]'
-                                  : 'bg-white text-[#39453E] border-[#E6E1D6] hover:border-[#1B5E42]'
+                                  : 'bg-white text-[#8A421A] border-[#F0CFAF] hover:border-[#B85D2B] hover:bg-[#FDF3EB]'
                               }`}
                             >
                               {option}
                             </button>
                           );
                         })}
+                      </div>
+                    )}
+
+                    {suggestedOptions.length > 0 && (
+                      <div className="space-y-1">
+                        {hasManual && (
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#85918A]">
+                            More suggestions
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-1.5">
+                          {suggestedOptions.map((option) => {
+                            const isCurrent = isOptionActive(option);
+                            return (
+                              <button
+                                key={option}
+                                type="button"
+                                data-testid={`swap-option-${key}-${option}`}
+                                onClick={() => applySwap(ing.name, option)}
+                                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+                                  isCurrent
+                                    ? 'bg-[#1B5E42] text-white border-[#1B5E42]'
+                                    : 'bg-white text-[#39453E] border-[#E6E1D6] hover:border-[#1B5E42]'
+                                }`}
+                              >
+                                {option}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
 

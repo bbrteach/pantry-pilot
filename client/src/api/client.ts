@@ -166,6 +166,15 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  addStapleToGroceryList: (stapleId: number) =>
+    request<{
+      action: 'added' | 'restored' | 'incremented';
+      item: GroceryListItem;
+      items: GroceryListItem[];
+    }>(`/api/grocery-list/staples/${stapleId}`, {
+      method: 'POST',
+    }),
+
   updateGroceryItem: (
     id: number,
     payload: {
