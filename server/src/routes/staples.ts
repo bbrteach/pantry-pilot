@@ -73,6 +73,32 @@ staplesRouter.post('/', (req, res) => {
   res.status(201).json(mapStaple(row));
 });
 
+staplesRouter.patch('/auto-include', (req, res) => {
+  const autoInclude = req.body?.autoInclude;
+  if (typeof autoInclude !== 'boolean') {
+    res.status(400).json({ error: 'autoInclude boolean is required.' });
+    return;
+  }
+
+  const targetVal = autoInclude ? 1 : 0;
+  const result = db
+    .prepare(
+      "UPDATE staples SET auto_include = ?, updated_at = datetime('now') WHERE auto_include != ?"
+    )
+    .run(targetVal, targetVal);
+
+  const rows = db
+    .prepare(
+      'SELECT id, name, normalized_name, quantity, unit, category, auto_include, created_at, updated_at FROM staples ORDER BY auto_include DESC, name COLLATE NOCASE ASC'
+    )
+    .all() as StapleRow[];
+
+  res.json({
+    updatedCount: result.changes,
+    staples: rows.map(mapStaple),
+  });
+});
+
 staplesRouter.put('/:id', (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {

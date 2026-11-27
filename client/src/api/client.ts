@@ -7,6 +7,7 @@ import type {
   KrogerStatus,
   Meal,
   MealCustomization,
+  MealIdea,
   MealPayload,
   MealSideItem,
   ProductMapping,
@@ -68,6 +69,13 @@ export const api = {
     return request<Meal[]>(`/api/meals${qs ? `?${qs}` : ''}`);
   },
 
+  getMealIdeas: () => request<MealIdea[]>('/api/meals/ideas'),
+
+  addMealIdeaToLibrary: (ideaId: string) =>
+    request<Meal>(`/api/meals/ideas/${encodeURIComponent(ideaId)}/add`, {
+      method: 'POST',
+    }),
+
   createMeal: (payload: MealPayload) =>
     request<Meal>('/api/meals', {
       method: 'POST',
@@ -103,6 +111,12 @@ export const api = {
     request<Staple>(`/api/staples/${id}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
+    }),
+
+  setAllStaplesAutoInclude: (autoInclude: boolean) =>
+    request<{ updatedCount: number; staples: Staple[] }>('/api/staples/auto-include', {
+      method: 'PATCH',
+      body: JSON.stringify({ autoInclude }),
     }),
 
   deleteStaple: (id: number) =>
@@ -198,6 +212,11 @@ export const api = {
 
   clearCheckedGroceryItems: () =>
     request<{ deletedCount: number }>('/api/grocery-list/checked', {
+      method: 'DELETE',
+    }),
+
+  clearGroceryList: () =>
+    request<{ deletedCount: number }>('/api/grocery-list', {
       method: 'DELETE',
     }),
 

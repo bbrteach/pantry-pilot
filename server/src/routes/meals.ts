@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db/database.js';
+import { MEAL_IDEA_CATALOG } from '../data/mealIdeas.js';
 import { normalizeIngredientName } from '../services/consolidation.js';
 
 export const mealsRouter = Router();
@@ -163,6 +164,79 @@ mealsRouter.get('/', (req, res) => {
   }
 
   res.json(meals);
+});
+
+mealsRouter.get('/ideas', (_req, res) => {
+  const existingNames = new Set(
+    (db.prepare('SELECT name FROM meals').all() as Array<{ name: string }>).map((row) =>
+      normalizeIngredientName(row.name)
+    )
+  );
+
+  const ideas = MEAL_IDEA_CATALOG.map((idea) => ({
+    ...idea,
+    ingredients: idea.ingredients.map((ing) => ({
+      ...ing,
+      alternatives: sanitizeIngredientAlternatives(ing.alternatives, ing.name),
+    })),
+    inLibrary: existingNames.has(normalizeIngredientName(idea.name)),
+  }));
+
+  res.json(ideas);
+});
+
+mealsRouter.post('/ideas/:ideaId/add', (req, res) => {
+  const ideaId = typeof req.params.ideaId === 'string' ? req.params.ideaId.trim() : '';
+  const idea = MEAL_IDEA_CATALOG.find((entry) => entry.id === ideaId);
+  if (!idea) {
+    res.status(404).json({ error: 'Meal idea not found.' });
+    return;
+  }
+
+  const normalizedIdeaName = normalizeIngredientName(idea.name);
+  const existingRows = db.prepare('SELECT id, name FROM meals').all() as Array<{
+    id: number;
+    name: string;
+  }>;
+  const duplicate = existingRows.find(
+    (row) => normalizeIngredientName(row.name) === normalizedIdeaName
+  );
+  if (duplicate) {
+    res.status(409).json({ error: `"${idea.name}" is already in your meal library.` });
+    return;
+  }
+
+  const createTx = db.transaction(() => {
+    const result = db
+      .prepare(
+        "INSERT INTO meals (name, notes, tags, image_url, updated_at) VALUES (?, ?, ?, '', datetime('now'))"
+      )
+      .run(idea.name, idea.notes, JSON.stringify(idea.tags));
+    const mealId = Number(result.lastInsertRowid);
+
+    const insertIng = db.prepare(
+      'INSERT INTO meal_ingredients (meal_id, name, normalized_name, quantity, unit, alternatives) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    for (const ing of idea.ingredients) {
+      const alternatives = sanitizeIngredientAlternatives(ing.alternatives, ing.name);
+      insertIng.run(
+        mealId,
+        ing.name,
+        normalizeIngredientName(ing.name),
+        ing.quantity,
+        ing.unit ?? '',
+        JSON.stringify(alternatives)
+      );
+    }
+    return mealId;
+  });
+
+  const mealId = createTx();
+  const row = db
+    .prepare('SELECT id, name, notes, tags, image_url, created_at, updated_at FROM meals WHERE id = ?')
+    .get(mealId) as MealRow;
+
+  res.status(201).json(hydrateMeals([row])[0]);
 });
 
 mealsRouter.post('/', (req, res) => {

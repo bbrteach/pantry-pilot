@@ -9,6 +9,7 @@ import type {
   KrogerStatus,
   Meal,
   MealCustomization,
+  MealIdea,
   MealPayload,
   MealSideItem,
   NewMealDealSuggestion,
@@ -39,16 +40,25 @@ function getInitialTab(): ActiveTab {
   ) {
     return hash;
   }
+  if (hash === 'ideas') {
+    return 'meals';
+  }
   return 'meals';
+}
+
+function getInitialMealsSubTab(): 'library' | 'ideas' {
+  return window.location.hash.replace('#', '') === 'ideas' ? 'ideas' : 'library';
 }
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>(getInitialTab);
+  const [mealsSubTab, setMealsSubTab] = useState<'library' | 'ideas'>(getInitialMealsSubTab);
   const [krogerSubTab, setKrogerSubTab] = useState<'cart' | 'deals'>('cart');
   const [authChecked, setAuthChecked] = useState(false);
   const [passcodeEnabled, setPasscodeEnabled] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [meals, setMeals] = useState<Meal[]>([]);
+  const [mealIdeas, setMealIdeas] = useState<MealIdea[]>([]);
   const [staples, setStaples] = useState<Staple[]>([]);
   const [selectedMealIds, setSelectedMealIds] = useState<number[]>([]);
   const [customizations, setCustomizations] = useState<Record<number, MealCustomization>>({});
@@ -77,7 +87,16 @@ export function App() {
 
   const selectTab = (tab: ActiveTab) => {
     setActiveTab(tab);
-    window.history.replaceState(null, '', `#${tab}`);
+    window.history.replaceState(
+      null,
+      '',
+      `#${tab === 'meals' && mealsSubTab === 'ideas' ? 'ideas' : tab}`
+    );
+  };
+
+  const selectMealsSubTab = (subTab: 'library' | 'ideas') => {
+    setMealsSubTab(subTab);
+    window.history.replaceState(null, '', subTab === 'ideas' ? '#ideas' : '#meals');
   };
 
   // Handle OAuth2 callback query params (?kroger_connected=1&kroger_account=... / ?kroger_error=...)
@@ -133,17 +152,27 @@ export function App() {
     try {
       setLoading(true);
       setErrorBanner(null);
-      const [mealsData, staplesData, planData, scheduleData, groceryData, krogerData, dealsData] =
-        await Promise.all([
-          api.getMeals(),
-          api.getStaples(),
-          api.getPlan(),
-          api.getSchedule(),
-          api.getGroceryList(),
-          api.getKrogerStatus().catch(() => null),
-          api.getKrogerDeals().catch(() => null),
-        ]);
+      const [
+        mealsData,
+        mealIdeasData,
+        staplesData,
+        planData,
+        scheduleData,
+        groceryData,
+        krogerData,
+        dealsData,
+      ] = await Promise.all([
+        api.getMeals(),
+        api.getMealIdeas().catch(() => [] as MealIdea[]),
+        api.getStaples(),
+        api.getPlan(),
+        api.getSchedule(),
+        api.getGroceryList(),
+        api.getKrogerStatus().catch(() => null),
+        api.getKrogerDeals().catch(() => null),
+      ]);
       setMeals(mealsData);
+      setMealIdeas(mealIdeasData);
       setStaples(staplesData);
       setSelectedMealIds(planData.mealIds);
       setCustomizations(planData.customizations ?? {});
@@ -243,6 +272,18 @@ export function App() {
     showToast('Meal deleted');
   };
 
+  const handleAddMealIdea = async (idea: MealIdea) => {
+    try {
+      const created = await api.addMealIdeaToLibrary(idea.id);
+      setMeals((prev) =>
+        [...prev, created].sort((a, b) => a.name.localeCompare(b.name))
+      );
+      showToast(`Added "${created.name}" to Meal Library`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not add meal idea');
+    }
+  };
+
   // Staple handlers
   const handleCreateStaple = async (payload: StaplePayload) => {
     const created = await api.createStaple(payload);
@@ -253,6 +294,20 @@ export function App() {
   const handleUpdateStaple = async (id: number, payload: Partial<StaplePayload>) => {
     const updated = await api.updateStaple(id, payload);
     setStaples((prev) => prev.map((s) => (s.id === id ? updated : s)));
+  };
+
+  const handleSetAllStaplesSavedOnly = async () => {
+    try {
+      const res = await api.setAllStaplesAutoInclude(false);
+      setStaples(res.staples);
+      showToast(
+        res.updatedCount > 0
+          ? `Changed ${res.updatedCount} ${res.updatedCount === 1 ? 'staple' : 'staples'} to saved only`
+          : 'All staples are already saved only'
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update staples');
+    }
   };
 
   const handleDeleteStaple = async (id: number) => {
@@ -464,6 +519,21 @@ export function App() {
     showToast('Cleared checked items');
   };
 
+  const handleClearGroceryList = async () => {
+    try {
+      const res = await api.clearGroceryList();
+      setGroceryItems([]);
+      setSavingsData(null);
+      showToast(
+        res.deletedCount > 0
+          ? `Cleared all ${res.deletedCount} ${res.deletedCount === 1 ? 'item' : 'items'} from shopping list`
+          : 'Shopping list is already empty'
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to clear shopping list');
+    }
+  };
+
   const handleAddAdHocItem = async (payload: {
     name: string;
     quantity: number;
@@ -632,9 +702,13 @@ export function App() {
           {activeTab === 'meals' && (
             <MealsView
               meals={meals}
+              mealIdeas={mealIdeas}
+              initialSubTab={mealsSubTab}
+              onSubTabChange={selectMealsSubTab}
               onCreateMeal={handleCreateMeal}
               onUpdateMeal={handleUpdateMeal}
               onDeleteMeal={handleDeleteMeal}
+              onAddMealIdea={handleAddMealIdea}
             />
           )}
 
@@ -644,6 +718,7 @@ export function App() {
               groceryItems={groceryItems}
               onCreateStaple={handleCreateStaple}
               onUpdateStaple={handleUpdateStaple}
+              onSetAllSavedOnly={handleSetAllStaplesSavedOnly}
               onDeleteStaple={handleDeleteStaple}
               onAddStapleToList={handleAddStapleToList}
             />
@@ -687,6 +762,7 @@ export function App() {
               onStepQuantity={handleStepQuantity}
               onDeleteItem={handleDeleteGroceryItem}
               onClearChecked={handleClearChecked}
+              onClearAll={handleClearGroceryList}
               onAddAdHocItem={handleAddAdHocItem}
               onGoToPlanner={() => selectTab('plan')}
               onOpenKroger={() => {

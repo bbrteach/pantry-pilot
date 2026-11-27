@@ -30,6 +30,21 @@ export interface MealPayload {
   }>;
 }
 
+export interface MealIdea {
+  id: string;
+  name: string;
+  notes: string;
+  prepTime: string;
+  tags: string[];
+  ingredients: Array<{
+    name: string;
+    quantity: number;
+    unit: string;
+    alternatives?: string[];
+  }>;
+  inLibrary: boolean;
+}
+
 export interface Staple {
   id: number;
   name: string;

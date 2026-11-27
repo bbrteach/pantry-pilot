@@ -8,6 +8,7 @@ import {
   Plus,
   ShoppingCart,
   Tag,
+  ToggleLeft,
   Trash2,
 } from 'lucide-react';
 import type { GroceryListItem, Staple, StaplePayload } from '../types';
@@ -38,6 +39,7 @@ interface StaplesViewProps {
   groceryItems: GroceryListItem[];
   onCreateStaple: (payload: StaplePayload) => Promise<void>;
   onUpdateStaple: (id: number, payload: Partial<StaplePayload>) => Promise<void>;
+  onSetAllSavedOnly: () => Promise<void>;
   onDeleteStaple: (id: number) => Promise<void>;
   onAddStapleToList: (staple: Staple) => Promise<void>;
 }
@@ -47,12 +49,14 @@ export function StaplesView({
   groceryItems,
   onCreateStaple,
   onUpdateStaple,
+  onSetAllSavedOnly,
   onDeleteStaple,
   onAddStapleToList,
 }: StaplesViewProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingStaple, setEditingStaple] = useState<Staple | null>(null);
   const [addingStapleId, setAddingStapleId] = useState<number | null>(null);
+  const [updatingAllSavedOnly, setUpdatingAllSavedOnly] = useState(false);
   const [sortMode, setSortMode] = useState<StapleSortMode>(getInitialSortMode);
 
   useEffect(() => {
@@ -107,6 +111,16 @@ export function StaplesView({
     }
   };
 
+  const handleSetAllSavedOnlyClick = async () => {
+    if (autoCount === 0 || updatingAllSavedOnly) return;
+    setUpdatingAllSavedOnly(true);
+    try {
+      await onSetAllSavedOnly();
+    } finally {
+      setUpdatingAllSavedOnly(false);
+    }
+  };
+
   const sortOptions: Array<{
     mode: StapleSortMode;
     label: string;
@@ -157,37 +171,65 @@ export function StaplesView({
       </div>
 
       {staples.length > 0 && (
-        <div
-          role="group"
-          aria-label="Sort recurring staples"
-          className="flex items-center gap-2 flex-wrap"
-        >
-          <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[#85918A] mr-0.5">
-            <ArrowUpDown className="w-3.5 h-3.5" />
-            Sort
-          </span>
-          {sortOptions.map((opt) => {
-            const Icon = opt.icon;
-            const active = sortMode === opt.mode;
-            return (
-              <button
-                key={opt.mode}
-                type="button"
-                aria-pressed={active}
-                data-testid={`sort-staples-${opt.mode}`}
-                onClick={() => setSortMode(opt.mode)}
-                className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
-                  active
-                    ? 'bg-[#1B5E42] text-white border-[#1B5E42] shadow-xs'
-                    : 'bg-white text-[#5C6961] border-[#E6E1D6] hover:border-[#1B5E42]/40 hover:text-[#1A241E]'
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline">{opt.label}</span>
-                <span className="sm:hidden">{opt.shortLabel}</span>
-              </button>
-            );
-          })}
+        <div className="flex items-center justify-between gap-2.5 flex-wrap">
+          <div
+            role="group"
+            aria-label="Sort recurring staples"
+            className="flex items-center gap-2 flex-wrap"
+          >
+            <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[#85918A] mr-0.5">
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              Sort
+            </span>
+            {sortOptions.map((opt) => {
+              const Icon = opt.icon;
+              const active = sortMode === opt.mode;
+              return (
+                <button
+                  key={opt.mode}
+                  type="button"
+                  aria-pressed={active}
+                  data-testid={`sort-staples-${opt.mode}`}
+                  onClick={() => setSortMode(opt.mode)}
+                  className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
+                    active
+                      ? 'bg-[#1B5E42] text-white border-[#1B5E42] shadow-xs'
+                      : 'bg-white text-[#5C6961] border-[#E6E1D6] hover:border-[#1B5E42]/40 hover:text-[#1A241E]'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">{opt.label}</span>
+                  <span className="sm:hidden">{opt.shortLabel}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            id="set-all-staples-saved-only-btn"
+            type="button"
+            disabled={autoCount === 0 || updatingAllSavedOnly}
+            onClick={() => void handleSetAllSavedOnlyClick()}
+            title={
+              autoCount > 0
+                ? `Switch all ${autoCount} auto-included staples to saved only`
+                : 'All staples are already saved only'
+            }
+            className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-xs font-semibold border transition-all ${
+              autoCount > 0
+                ? 'bg-white border-[#E6E1D6] text-[#8A421A] hover:bg-[#FDF3EB] hover:border-[#F0CFAF] active:scale-[0.98] cursor-pointer shadow-[0_1px_2px_rgba(26,36,30,0.03)]'
+                : 'bg-[#FAF8F4] border-[#ECE7DC] text-[#85918A] cursor-not-allowed'
+            }`}
+          >
+            <ToggleLeft className="w-4 h-4 shrink-0" />
+            <span>
+              {updatingAllSavedOnly
+                ? 'Updating...'
+                : autoCount > 0
+                ? `Set All to Saved Only (${autoCount})`
+                : 'All Saved Only'}
+            </span>
+          </button>
         </div>
       )}
 

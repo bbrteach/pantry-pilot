@@ -1,4 +1,5 @@
 import { db } from '../db/database.js';
+import { MEAL_IDEA_CATALOG } from '../data/mealIdeas.js';
 import { normalizeIngredientName } from './consolidation.js';
 import {
   getSavedStore,
@@ -51,7 +52,7 @@ export interface NewMealIdeaTemplate {
   name: string;
   notes: string;
   tags: string[];
-  ingredients: Array<{ name: string; quantity: number; unit: string }>;
+  ingredients: Array<{ name: string; quantity: number; unit: string; alternatives?: string[] }>;
 }
 
 export interface NewMealDealSuggestion extends NewMealIdeaTemplate {
@@ -89,135 +90,7 @@ const IGNORED_TINY_INGREDIENTS = new Set([
   'sugar',
 ]);
 
-const CURATED_MEAL_IDEAS: NewMealIdeaTemplate[] = [
-  {
-    id: 'teriyaki-chicken-bowls',
-    name: 'Teriyaki Chicken Rice Bowls',
-    notes: 'Pan-seared chicken glazed in teriyaki over steamed rice with crisp broccoli.',
-    tags: ['Quick', 'Family Favorite'],
-    ingredients: [
-      { name: 'Chicken Breast', quantity: 2, unit: 'lbs' },
-      { name: 'Jasmine Rice', quantity: 2, unit: 'cups' },
-      { name: 'Broccoli Florets', quantity: 1, unit: 'bag' },
-      { name: 'Teriyaki Sauce', quantity: 1, unit: 'bottle' },
-    ],
-  },
-  {
-    id: 'cheesy-beef-broccoli-skillet',
-    name: 'Cheesy Beef & Broccoli Skillet',
-    notes: 'One-skillet ground beef, rice, broccoli, and melted cheddar ready in 25 minutes.',
-    tags: ['Quick', 'Budget'],
-    ingredients: [
-      { name: 'Ground Beef', quantity: 1.5, unit: 'lbs' },
-      { name: 'Broccoli Florets', quantity: 1, unit: 'bag' },
-      { name: 'Shredded Cheddar Cheese', quantity: 2, unit: 'cups' },
-      { name: 'Jasmine Rice', quantity: 1.5, unit: 'cups' },
-      { name: 'Chicken Broth', quantity: 2, unit: 'cups' },
-    ],
-  },
-  {
-    id: 'sheet-pan-sausage-peppers',
-    name: 'Sheet Pan Sausage & Peppers',
-    notes: 'Roast sliced Italian sausage with bell peppers, yellow onion, and baby potatoes.',
-    tags: ['Sheet Pan', 'Quick'],
-    ingredients: [
-      { name: 'Italian Sausage', quantity: 1.5, unit: 'lbs' },
-      { name: 'Bell Peppers', quantity: 3, unit: 'whole' },
-      { name: 'Yellow Onion', quantity: 1, unit: 'whole' },
-      { name: 'Baby Potatoes', quantity: 1.5, unit: 'lbs' },
-    ],
-  },
-  {
-    id: 'baked-ziti-marinara',
-    name: 'Baked Cheesy Pasta & Sausage',
-    notes: 'Toss penne with marinara, browned sausage, and bubbly mozzarella/cheddar.',
-    tags: ['Family Favorite', 'Budget'],
-    ingredients: [
-      { name: 'Penne Pasta', quantity: 1, unit: 'box' },
-      { name: 'Marinara Sauce', quantity: 1, unit: 'jar' },
-      { name: 'Italian Sausage', quantity: 1, unit: 'lb' },
-      { name: 'Shredded Mozzarella', quantity: 2, unit: 'cups' },
-    ],
-  },
-  {
-    id: 'crockpot-pork-carnitas-tacos',
-    name: 'Crockpot Pork Carnitas Tacos',
-    notes: 'Slow-cooked citrus pork shoulder crisped in a skillet and served on warm tortillas.',
-    tags: ['Crockpot', 'Family Favorite'],
-    ingredients: [
-      { name: 'Pork Shoulder', quantity: 3, unit: 'lbs' },
-      { name: 'Flour Tortillas', quantity: 1, unit: 'pack' },
-      { name: 'Yellow Onion', quantity: 1, unit: 'whole' },
-      { name: 'Salsa Verde', quantity: 1, unit: 'jar' },
-      { name: 'Avocado', quantity: 2, unit: 'whole' },
-    ],
-  },
-  {
-    id: 'creamy-tuscan-salmon',
-    name: 'Creamy Tuscan Garlic Salmon',
-    notes: 'Pan-seared salmon fillets simmered in garlic cream sauce with baby spinach.',
-    tags: ['Quick', 'Healthy'],
-    ingredients: [
-      { name: 'Salmon Fillets', quantity: 1.5, unit: 'lbs' },
-      { name: 'Heavy Cream', quantity: 1, unit: 'cup' },
-      { name: 'Baby Spinach', quantity: 1, unit: 'bag' },
-      { name: 'Garlic', quantity: 3, unit: 'cloves' },
-      { name: 'Grated Parmesan', quantity: 0.5, unit: 'cup' },
-    ],
-  },
-  {
-    id: 'loaded-bacon-potato-soup',
-    name: 'Loaded Bacon & Cheddar Potato Soup',
-    notes: 'Cozy creamy potato soup topped with crispy bacon and shredded cheddar cheese.',
-    tags: ['Crockpot', 'Family Favorite'],
-    ingredients: [
-      { name: 'Baby Potatoes', quantity: 2, unit: 'lbs' },
-      { name: 'Bacon', quantity: 1, unit: 'pack' },
-      { name: 'Shredded Cheddar Cheese', quantity: 2, unit: 'cups' },
-      { name: 'Chicken Broth', quantity: 4, unit: 'cups' },
-      { name: 'Heavy Cream', quantity: 1, unit: 'cup' },
-    ],
-  },
-  {
-    id: 'breakfast-for-dinner-burritos',
-    name: 'Breakfast-for-Dinner Burritos',
-    notes: 'Fluffy scrambled eggs, crispy bacon, cheddar cheese, and salsa wrapped in tortillas.',
-    tags: ['Quick', 'Budget', 'Family Favorite'],
-    ingredients: [
-      { name: 'Large Eggs', quantity: 1, unit: 'dozen' },
-      { name: 'Bacon', quantity: 1, unit: 'pack' },
-      { name: 'Flour Tortillas', quantity: 1, unit: 'pack' },
-      { name: 'Shredded Cheddar Cheese', quantity: 2, unit: 'cups' },
-      { name: 'Salsa', quantity: 1, unit: 'jar' },
-    ],
-  },
-  {
-    id: 'white-chicken-chili',
-    name: 'Crockpot White Chicken Chili',
-    notes: 'Tender shredded chicken, white beans, green chiles, and broth slow-cooked until creamy.',
-    tags: ['Crockpot', 'Healthy'],
-    ingredients: [
-      { name: 'Chicken Breast', quantity: 2, unit: 'lbs' },
-      { name: 'Black Beans', quantity: 2, unit: 'cans' },
-      { name: 'Chicken Broth', quantity: 4, unit: 'cups' },
-      { name: 'Yellow Onion', quantity: 1, unit: 'whole' },
-      { name: 'Shredded Cheddar Cheese', quantity: 1, unit: 'cup' },
-    ],
-  },
-  {
-    id: 'stuffed-bell-peppers',
-    name: 'Cheesy Beef Stuffed Bell Peppers',
-    notes: 'Halved bell peppers baked with seasoned ground beef, rice, diced tomatoes, and cheddar.',
-    tags: ['Healthy', 'Family Favorite'],
-    ingredients: [
-      { name: 'Bell Peppers', quantity: 4, unit: 'whole' },
-      { name: 'Ground Beef', quantity: 1.5, unit: 'lbs' },
-      { name: 'Jasmine Rice', quantity: 1, unit: 'cup' },
-      { name: 'Diced Tomatoes', quantity: 1, unit: 'can' },
-      { name: 'Shredded Cheddar Cheese', quantity: 1.5, unit: 'cups' },
-    ],
-  },
-];
+const CURATED_MEAL_IDEAS: NewMealIdeaTemplate[] = MEAL_IDEA_CATALOG;
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;

@@ -528,6 +528,11 @@ groceryListRouter.patch('/items/:id', (req, res) => {
   res.json(updated);
 });
 
+groceryListRouter.delete('/', (_req, res) => {
+  const result = db.prepare('DELETE FROM grocery_list_items').run();
+  res.json({ deletedCount: result.changes });
+});
+
 groceryListRouter.delete('/checked', (_req, res) => {
   const result = db.prepare('DELETE FROM grocery_list_items WHERE is_checked = 1').run();
   res.json({ deletedCount: result.changes });

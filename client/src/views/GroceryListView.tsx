@@ -34,6 +34,7 @@ interface GroceryListViewProps {
   onStepQuantity: (item: GroceryListItem, delta: number, unitIndex?: number) => Promise<void>;
   onDeleteItem: (id: number) => Promise<void>;
   onClearChecked: () => Promise<void>;
+  onClearAll: () => Promise<void>;
   onAddAdHocItem: (payload: { name: string; quantity: number; unit: string }) => Promise<void>;
   onGoToPlanner: () => void;
   onOpenKroger: () => void;
@@ -50,6 +51,7 @@ export function GroceryListView({
   onStepQuantity,
   onDeleteItem,
   onClearChecked,
+  onClearAll,
   onAddAdHocItem,
   onGoToPlanner,
   onOpenKroger,
@@ -60,6 +62,8 @@ export function GroceryListView({
   const [adding, setAdding] = useState(false);
   const [dismissedIds, setDismissedIds] = useState<Set<number>>(new Set());
   const [switchingItemId, setSwitchingItemId] = useState<number | null>(null);
+  const [confirmingClearAll, setConfirmingClearAll] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
 
   const activeItems = items.filter((item) => !item.isChecked);
   const checkedItems = items.filter((item) => item.isChecked);
@@ -121,9 +125,20 @@ export function GroceryListView({
     }
   };
 
+  const handleConfirmClearAll = async () => {
+    setClearingAll(true);
+    try {
+      await onClearAll();
+      setConfirmingClearAll(false);
+      setDismissedIds(new Set());
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
   return (
     <section className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#1A241E]">
             Grocery List
@@ -135,7 +150,7 @@ export function GroceryListView({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           {canCheckSavings && (
             <button
               id="check-savings-btn"
@@ -154,6 +169,18 @@ export function GroceryListView({
               <span className="sm:hidden">{checkingSavings ? '...' : 'Savings'}</span>
             </button>
           )}
+          {items.length > 0 && (
+            <button
+              id="clear-all-grocery-items-btn"
+              type="button"
+              disabled={clearingAll}
+              onClick={() => setConfirmingClearAll((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 h-10 px-3 rounded-xl text-xs font-semibold bg-white border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Clear List</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onGoToPlanner}
@@ -164,6 +191,42 @@ export function GroceryListView({
           </button>
         </div>
       </div>
+
+      {/* Inline confirmation banner for clearing entire shopping list */}
+      {confirmingClearAll && items.length > 0 && (
+        <div
+          id="confirm-clear-grocery-list-banner"
+          role="alert"
+          className="rounded-2xl border border-red-200 bg-red-50/90 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="text-xs sm:text-sm text-red-900">
+            <span className="font-bold">Clear entire shopping list?</span>{' '}
+            <span className="text-red-700">
+              This removes all {items.length} {items.length === 1 ? 'item' : 'items'}
+              {checkedItems.length > 0 ? ' (both active and checked off)' : ''}.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={clearingAll}
+              onClick={() => setConfirmingClearAll(false)}
+              className="h-9 px-3 rounded-xl text-xs font-semibold bg-white border border-[#E6E1D6] text-[#5C6961] hover:bg-[#F8F6F1] transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              id="confirm-clear-all-grocery-items-btn"
+              type="button"
+              disabled={clearingAll}
+              onClick={() => void handleConfirmClearAll()}
+              className="h-9 px-3.5 rounded-xl text-xs font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-60 transition-colors cursor-pointer"
+            >
+              {clearingAll ? 'Clearing...' : 'Yes, Clear Everything'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Kroger status / Match & Send CTA banner */}
       <KrogerBanner

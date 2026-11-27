@@ -347,4 +347,155 @@ describe('Manual Ingredient Alternatives & Individual Staple Add-to-List', () =>
     assert.equal(listRes.status, 200);
     assert.equal(listRes.data[0].category, 'Snacks');
   });
+
+  it('clears the entire shopping list including both active and checked items', async () => {
+    const itemA = await apiJson<{ id: number }>('/api/grocery-list/items', {
+      method: 'POST',
+      body: { name: 'Milk', quantity: 1, unit: 'gallon' },
+    });
+    const itemB = await apiJson<{ id: number }>('/api/grocery-list/items', {
+      method: 'POST',
+      body: { name: 'Eggs', quantity: 1, unit: 'dozen' },
+    });
+    assert.equal(itemA.status, 201);
+    assert.equal(itemB.status, 201);
+
+    // Check off one item to verify both active and checked items get removed
+    await apiJson(`/api/grocery-list/items/${itemB.data.id}`, {
+      method: 'PATCH',
+      body: { isChecked: true },
+    });
+
+    const clearRes = await apiJson<{ deletedCount: number }>('/api/grocery-list', {
+      method: 'DELETE',
+    });
+    assert.equal(clearRes.status, 200);
+    assert.equal(clearRes.data.deletedCount, 2);
+
+    const remaining = await apiJson<Array<{ id: number }>>('/api/grocery-list');
+    assert.equal(remaining.status, 200);
+    assert.equal(remaining.data.length, 0);
+
+    // Clearing an already empty list succeeds cleanly with deletedCount 0
+    const clearAgain = await apiJson<{ deletedCount: number }>('/api/grocery-list', {
+      method: 'DELETE',
+    });
+    assert.equal(clearAgain.status, 200);
+    assert.equal(clearAgain.data.deletedCount, 0);
+  });
+
+  it('switches all auto-include staples to saved only in one bulk request', async () => {
+    await apiJson('/api/staples', {
+      method: 'POST',
+      body: { name: 'Whole Milk', quantity: 1, unit: 'gallon', category: 'Dairy & Eggs', autoInclude: true },
+    });
+    await apiJson('/api/staples', {
+      method: 'POST',
+      body: { name: 'Bananas', quantity: 1, unit: 'bunch', category: 'Produce', autoInclude: true },
+    });
+    await apiJson('/api/staples', {
+      method: 'POST',
+      body: { name: 'Coffee Beans', quantity: 1, unit: 'bag', category: 'Beverages', autoInclude: false },
+    });
+
+    const bulkRes = await apiJson<{
+      updatedCount: number;
+      staples: Array<{ name: string; autoInclude: boolean; category: string }>;
+    }>('/api/staples/auto-include', {
+      method: 'PATCH',
+      body: { autoInclude: false },
+    });
+
+    assert.equal(bulkRes.status, 200);
+    assert.equal(bulkRes.data.updatedCount, 2);
+    assert.equal(bulkRes.data.staples.length, 3);
+    assert.ok(bulkRes.data.staples.every((s) => s.autoInclude === false));
+    assert.equal(
+      bulkRes.data.staples.find((s) => s.name === 'Whole Milk')?.category,
+      'Dairy & Eggs'
+    );
+
+    // Calling again when all are already saved only updates 0 rows
+    const secondRes = await apiJson<{ updatedCount: number }>('/api/staples/auto-include', {
+      method: 'PATCH',
+      body: { autoInclude: false },
+    });
+    assert.equal(secondRes.status, 200);
+    assert.equal(secondRes.data.updatedCount, 0);
+
+    // Invalid payload rejected
+    const badRes = await apiJson<{ error: string }>('/api/staples/auto-include', {
+      method: 'PATCH',
+      body: { autoInclude: 'no' },
+    });
+    assert.equal(badRes.status, 400);
+  });
+
+  it('lists curated meal ideas and instantly adds an idea into the meal library', async () => {
+    const ideasRes = await apiJson<
+      Array<{
+        id: string;
+        name: string;
+        prepTime: string;
+        tags: string[];
+        ingredients: Array<{ name: string; quantity: number; unit: string; alternatives: string[] }>;
+        inLibrary: boolean;
+      }>
+    >('/api/meals/ideas');
+
+    assert.equal(ideasRes.status, 200);
+    assert.ok(ideasRes.data.length >= 20, 'Expected a rich catalog of meal ideas');
+    const firstIdea = ideasRes.data[0];
+    assert.equal(firstIdea.inLibrary, false);
+    assert.ok(firstIdea.ingredients.length > 0);
+    assert.ok(firstIdea.prepTime.length > 0);
+
+    // Instant add to meal library
+    const addRes = await apiJson<{
+      id: number;
+      name: string;
+      tags: string[];
+      ingredients: Array<{ name: string; alternatives: string[] }>;
+    }>(`/api/meals/ideas/${encodeURIComponent(firstIdea.id)}/add`, {
+      method: 'POST',
+    });
+
+    assert.equal(addRes.status, 201);
+    assert.equal(addRes.data.name, firstIdea.name);
+    assert.deepEqual(addRes.data.tags, firstIdea.tags);
+    assert.equal(addRes.data.ingredients.length, firstIdea.ingredients.length);
+
+    // Idea is now marked inLibrary
+    const refreshedIdeas = await apiJson<Array<{ id: string; inLibrary: boolean }>>(
+      '/api/meals/ideas'
+    );
+    assert.equal(refreshedIdeas.status, 200);
+    assert.equal(
+      refreshedIdeas.data.find((idea) => idea.id === firstIdea.id)?.inLibrary,
+      true
+    );
+
+    // Duplicate add returns 409 Conflict
+    const dupRes = await apiJson<{ error: string }>(
+      `/api/meals/ideas/${encodeURIComponent(firstIdea.id)}/add`,
+      { method: 'POST' }
+    );
+    assert.equal(dupRes.status, 409);
+
+    // Unknown idea returns 404
+    const missingRes = await apiJson<{ error: string }>('/api/meals/ideas/does-not-exist/add', {
+      method: 'POST',
+    });
+    assert.equal(missingRes.status, 404);
+
+    // Deleting meal from library makes idea addable again
+    await apiJson(`/api/meals/${addRes.data.id}`, { method: 'DELETE' });
+    const afterDeleteIdeas = await apiJson<Array<{ id: string; inLibrary: boolean }>>(
+      '/api/meals/ideas'
+    );
+    assert.equal(
+      afterDeleteIdeas.data.find((idea) => idea.id === firstIdea.id)?.inLibrary,
+      false
+    );
+  });
 });
