@@ -108,7 +108,9 @@ const VARIANT_GROUPS: VariantGroup[] = [
     keywords: ['cheddar', 'mozzarella', 'monterey jack', 'mexican blend', 'colby jack', 'pepper jack', 'shredded cheese'],
     options: [
       'Shredded Cheddar Cheese',
-      'Mexican Blend Cheese',
+      'Shredded Sharp Cheddar',
+      'Shredded Mild Cheddar',
+      'Shredded Mexican Blend',
       'Shredded Mozzarella',
       'Colby Jack Cheese',
       'Pepper Jack Cheese',
@@ -169,6 +171,22 @@ export function normalizeIngKey(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+export function normalizeSwapList(raw: string | string[] | undefined | null): string[] {
+  const arr = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
+  const seen = new Set<string>();
+  const clean: string[] = [];
+  for (const item of arr) {
+    if (typeof item !== 'string') continue;
+    const trimmed = item.trim().replace(/\s+/g, ' ');
+    if (!trimmed) continue;
+    const key = normalizeIngKey(trimmed);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    clean.push(trimmed);
+  }
+  return clean;
+}
+
 export function getSuggestedVariantsForIngredient(ingredientName: string): {
   categoryLabel: string | null;
   options: string[];
@@ -216,6 +234,15 @@ export function resolveIngredientVariantOptions(
       categoryLabel,
       manualOptions,
       suggestedOptions,
+    };
+  }
+
+  if (autoOptions.length > 0 && baseName) {
+    const hasBase = autoOptions.some((opt) => normalizeIngKey(opt) === baseNorm);
+    return {
+      categoryLabel,
+      manualOptions: [],
+      suggestedOptions: hasBase ? autoOptions : [baseName, ...autoOptions],
     };
   }
 

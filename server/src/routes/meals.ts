@@ -1,7 +1,13 @@
 import { Router } from 'express';
 import { db } from '../db/database.js';
-import { MEAL_IDEA_CATALOG } from '../data/mealIdeas.js';
 import { normalizeIngredientName } from '../services/consolidation.js';
+import {
+  findMealIdeaById,
+  getMealIdeasFeed,
+  importMealIdeaFromUrl,
+  refreshLiveMealIdeas,
+  searchLiveMealIdeas,
+} from '../services/mealIdeasService.js';
 
 export const mealsRouter = Router();
 
@@ -167,27 +173,57 @@ mealsRouter.get('/', (req, res) => {
 });
 
 mealsRouter.get('/ideas', (_req, res) => {
-  const existingNames = new Set(
-    (db.prepare('SELECT name FROM meals').all() as Array<{ name: string }>).map((row) =>
-      normalizeIngredientName(row.name)
-    )
-  );
+  res.json(getMealIdeasFeed());
+});
 
-  const ideas = MEAL_IDEA_CATALOG.map((idea) => ({
-    ...idea,
-    ingredients: idea.ingredients.map((ing) => ({
-      ...ing,
-      alternatives: sanitizeIngredientAlternatives(ing.alternatives, ing.name),
-    })),
-    inLibrary: existingNames.has(normalizeIngredientName(idea.name)),
-  }));
+mealsRouter.post('/ideas/refresh', async (_req, res) => {
+  try {
+    const feed = await refreshLiveMealIdeas();
+    res.json(feed);
+  } catch (err) {
+    res.status(502).json({
+      error: err instanceof Error ? err.message : 'Could not refresh live recipe ideas.',
+    });
+  }
+});
 
-  res.json(ideas);
+mealsRouter.get('/ideas/search', async (req, res) => {
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (query.length < 2) {
+    res.status(400).json({ error: 'Search query must be at least 2 characters.' });
+    return;
+  }
+
+  try {
+    const results = await searchLiveMealIdeas(query);
+    res.json({ query, results, feed: getMealIdeasFeed() });
+  } catch (err) {
+    res.status(502).json({
+      error: err instanceof Error ? err.message : 'Could not search online recipes.',
+    });
+  }
+});
+
+mealsRouter.post('/ideas/import-url', async (req, res) => {
+  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+  if (!url) {
+    res.status(400).json({ error: 'Recipe URL is required.' });
+    return;
+  }
+
+  try {
+    const idea = await importMealIdeaFromUrl(url);
+    res.status(201).json({ idea, feed: getMealIdeasFeed() });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Could not import recipe from that URL.';
+    const status = message.startsWith('Please enter a valid') ? 400 : 422;
+    res.status(status).json({ error: message });
+  }
 });
 
 mealsRouter.post('/ideas/:ideaId/add', (req, res) => {
   const ideaId = typeof req.params.ideaId === 'string' ? req.params.ideaId.trim() : '';
-  const idea = MEAL_IDEA_CATALOG.find((entry) => entry.id === ideaId);
+  const idea = findMealIdeaById(ideaId);
   if (!idea) {
     res.status(404).json({ error: 'Meal idea not found.' });
     return;
@@ -206,12 +242,18 @@ mealsRouter.post('/ideas/:ideaId/add', (req, res) => {
     return;
   }
 
+  const safeImageUrl =
+    idea.imageUrl &&
+    (idea.imageUrl.startsWith('https://') || idea.imageUrl.startsWith('http://'))
+      ? idea.imageUrl
+      : '';
+
   const createTx = db.transaction(() => {
     const result = db
       .prepare(
-        "INSERT INTO meals (name, notes, tags, image_url, updated_at) VALUES (?, ?, ?, '', datetime('now'))"
+        "INSERT INTO meals (name, notes, tags, image_url, updated_at) VALUES (?, ?, ?, ?, datetime('now'))"
       )
-      .run(idea.name, idea.notes, JSON.stringify(idea.tags));
+      .run(idea.name, idea.notes, JSON.stringify(idea.tags), safeImageUrl);
     const mealId = Number(result.lastInsertRowid);
 
     const insertIng = db.prepare(

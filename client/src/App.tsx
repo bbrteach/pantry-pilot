@@ -10,6 +10,7 @@ import type {
   Meal,
   MealCustomization,
   MealIdea,
+  MealIdeasFeedResponse,
   MealPayload,
   MealSideItem,
   NewMealDealSuggestion,
@@ -58,7 +59,8 @@ export function App() {
   const [passcodeEnabled, setPasscodeEnabled] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [meals, setMeals] = useState<Meal[]>([]);
-  const [mealIdeas, setMealIdeas] = useState<MealIdea[]>([]);
+  const [mealIdeasFeed, setMealIdeasFeed] = useState<MealIdeasFeedResponse | null>(null);
+  const [refreshingIdeas, setRefreshingIdeas] = useState(false);
   const [staples, setStaples] = useState<Staple[]>([]);
   const [selectedMealIds, setSelectedMealIds] = useState<number[]>([]);
   const [customizations, setCustomizations] = useState<Record<number, MealCustomization>>({});
@@ -148,6 +150,32 @@ export function App() {
     [showToast]
   );
 
+  const refreshMealIdeasFeed = useCallback(
+    async (silent: boolean) => {
+      setRefreshingIdeas(true);
+      try {
+        const fresh = await api.refreshMealIdeas();
+        setMealIdeasFeed(fresh);
+        if (!silent) {
+          showToast(
+            fresh.liveCount > 0
+              ? `Loaded ${fresh.liveCount} fresh recipes from recipe websites`
+              : 'Meal ideas checked — showing available recipes'
+          );
+        }
+      } catch (err) {
+        if (!silent) {
+          showToast(
+            err instanceof Error ? err.message : 'Could not refresh live recipe ideas'
+          );
+        }
+      } finally {
+        setRefreshingIdeas(false);
+      }
+    },
+    [showToast]
+  );
+
   const loadAllData = useCallback(async () => {
     try {
       setLoading(true);
@@ -163,7 +191,7 @@ export function App() {
         dealsData,
       ] = await Promise.all([
         api.getMeals(),
-        api.getMealIdeas().catch(() => [] as MealIdea[]),
+        api.getMealIdeas().catch(() => null),
         api.getStaples(),
         api.getPlan(),
         api.getSchedule(),
@@ -172,7 +200,7 @@ export function App() {
         api.getKrogerDeals().catch(() => null),
       ]);
       setMeals(mealsData);
-      setMealIdeas(mealIdeasData);
+      setMealIdeasFeed(mealIdeasData);
       setStaples(staplesData);
       setSelectedMealIds(planData.mealIds);
       setCustomizations(planData.customizations ?? {});
@@ -183,6 +211,10 @@ export function App() {
       setGroceryItems(groceryData);
       setKrogerStatus(krogerData);
       setKrogerDeals(dealsData);
+
+      if (mealIdeasData?.stale) {
+        void refreshMealIdeasFeed(true);
+      }
 
       const hasMappedActive = groceryData.some((i) => !i.isChecked && Boolean(i.productMapping));
       if (krogerData?.configured && krogerData?.store && hasMappedActive) {
@@ -197,7 +229,7 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, [runSavingsCheck]);
+  }, [runSavingsCheck, refreshMealIdeasFeed]);
 
   useEffect(() => {
     let active = true;
@@ -284,6 +316,40 @@ export function App() {
     }
   };
 
+  const handleRefreshMealIdeas = async () => {
+    await refreshMealIdeasFeed(false);
+  };
+
+  const handleSearchWebIdeas = async (query: string): Promise<MealIdea[]> => {
+    try {
+      const res = await api.searchWebMealIdeas(query);
+      setMealIdeasFeed(res.feed);
+      if (res.results.length > 0) {
+        showToast(
+          `Found ${res.results.length} online ${res.results.length === 1 ? 'recipe' : 'recipes'} for "${res.query}"`
+        );
+      } else {
+        showToast(`No online recipes found for "${res.query}"`);
+      }
+      return res.results;
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not search online recipes');
+      return [];
+    }
+  };
+
+  const handleImportRecipeUrl = async (url: string): Promise<MealIdea | null> => {
+    try {
+      const res = await api.importMealIdeaFromUrl(url);
+      setMealIdeasFeed(res.feed);
+      showToast(`Imported "${res.idea.name}" from ${res.idea.sourceName}`);
+      return res.idea;
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not import recipe from URL');
+      return null;
+    }
+  };
+
   // Staple handlers
   const handleCreateStaple = async (payload: StaplePayload) => {
     const created = await api.createStaple(payload);
@@ -365,7 +431,7 @@ export function App() {
 
   const handleSaveMealCustomization = async (
     mealId: number,
-    payload: { sides: MealSideItem[]; swaps: Record<string, string> }
+    payload: { sides: MealSideItem[]; swaps: Record<string, string[]> }
   ) => {
     const res = await api.saveMealCustomization(mealId, payload);
     setCustomizations(res.customizations);
@@ -440,12 +506,26 @@ export function App() {
   };
 
   const handleClearPlan = async () => {
-    setSelectedMealIds([]);
-    setCustomizations({});
-    await api.savePlan([]);
-    const sched = await api.getSchedule();
-    setScheduleSlots(sched.slots);
-    showToast('Cleared meal selection');
+    try {
+      const res = await api.resetMealPlan();
+      setSelectedMealIds(res.mealIds);
+      setCustomizations(res.customizations);
+      setScheduleSlots(res.slots);
+      setKrogerDeals((prev) =>
+        prev
+          ? {
+              ...prev,
+              savedMealSuggestions: prev.savedMealSuggestions.map((s) => ({
+                ...s,
+                inCurrentPlan: false,
+              })),
+            }
+          : prev
+      );
+      showToast('Cleared meal plan & schedule — ready to start over');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to clear meal plan');
+    }
   };
 
   const handleGenerateGroceryList = async () => {
@@ -702,7 +782,11 @@ export function App() {
           {activeTab === 'meals' && (
             <MealsView
               meals={meals}
-              mealIdeas={mealIdeas}
+              mealIdeasFeed={mealIdeasFeed}
+              refreshingIdeas={refreshingIdeas}
+              onRefreshMealIdeas={handleRefreshMealIdeas}
+              onSearchWebIdeas={handleSearchWebIdeas}
+              onImportRecipeUrl={handleImportRecipeUrl}
               initialSubTab={mealsSubTab}
               onSubTabChange={selectMealsSubTab}
               onCreateMeal={handleCreateMeal}

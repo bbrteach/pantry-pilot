@@ -8,6 +8,7 @@ import type {
   Meal,
   MealCustomization,
   MealIdea,
+  MealIdeasFeedResponse,
   MealPayload,
   MealSideItem,
   ProductMapping,
@@ -69,7 +70,23 @@ export const api = {
     return request<Meal[]>(`/api/meals${qs ? `?${qs}` : ''}`);
   },
 
-  getMealIdeas: () => request<MealIdea[]>('/api/meals/ideas'),
+  getMealIdeas: () => request<MealIdeasFeedResponse>('/api/meals/ideas'),
+
+  refreshMealIdeas: () =>
+    request<MealIdeasFeedResponse>('/api/meals/ideas/refresh', {
+      method: 'POST',
+    }),
+
+  searchWebMealIdeas: (query: string) =>
+    request<{ query: string; results: MealIdea[]; feed: MealIdeasFeedResponse }>(
+      `/api/meals/ideas/search?q=${encodeURIComponent(query.trim())}`
+    ),
+
+  importMealIdeaFromUrl: (url: string) =>
+    request<{ idea: MealIdea; feed: MealIdeasFeedResponse }>('/api/meals/ideas/import-url', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
 
   addMealIdeaToLibrary: (ideaId: string) =>
     request<Meal>(`/api/meals/ideas/${encodeURIComponent(ideaId)}/add`, {
@@ -137,9 +154,18 @@ export const api = {
       body: JSON.stringify({ mealIds }),
     }),
 
+  resetMealPlan: () =>
+    request<{
+      mealIds: number[];
+      customizations: Record<number, MealCustomization>;
+      slots: ScheduleSlot[];
+    }>('/api/plan', {
+      method: 'DELETE',
+    }),
+
   saveMealCustomization: (
     mealId: number,
-    payload: { sides: MealSideItem[]; swaps: Record<string, string> }
+    payload: { sides: MealSideItem[]; swaps: Record<string, string[]> }
   ) =>
     request<{
       customization: MealCustomization;

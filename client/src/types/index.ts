@@ -36,6 +36,11 @@ export interface MealIdea {
   notes: string;
   prepTime: string;
   tags: string[];
+  imageUrl: string;
+  sourceName: string;
+  sourceUrl: string;
+  isLive: boolean;
+  publishedAt: string;
   ingredients: Array<{
     name: string;
     quantity: number;
@@ -43,6 +48,14 @@ export interface MealIdea {
     alternatives?: string[];
   }>;
   inLibrary: boolean;
+}
+
+export interface MealIdeasFeedResponse {
+  ideas: MealIdea[];
+  lastRefreshedAt: string | null;
+  stale: boolean;
+  liveCount: number;
+  sources: string[];
 }
 
 export interface Staple {
@@ -181,7 +194,7 @@ export interface QuickSidePreset {
 export interface MealCustomization {
   mealId: number;
   sides: MealSideItem[];
-  swaps: Record<string, string>;
+  swaps: Record<string, string[]>;
 }
 
 export interface CheaperAlternativeOption {

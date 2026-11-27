@@ -45,7 +45,7 @@ interface PlannerViewProps {
   onToggleMeal: (mealId: number) => void;
   onSaveMealCustomization: (
     mealId: number,
-    payload: { sides: MealSideItem[]; swaps: Record<string, string> }
+    payload: { sides: MealSideItem[]; swaps: Record<string, string[]> }
   ) => Promise<void>;
   onSaveSidePresets: (presets: QuickSidePreset[]) => Promise<void>;
   onResetSidePresets: () => Promise<void>;
@@ -58,7 +58,7 @@ interface PlannerViewProps {
   ) => Promise<void>;
   onClearScheduleSlot: (weekNumber: 1 | 2, dayOfWeek: number) => Promise<void>;
   onClearSchedule: () => Promise<void>;
-  onClearPlan: () => void;
+  onClearPlan: () => Promise<void>;
   onGenerateGroceryList: () => Promise<void>;
   onOpenKrogerDeals: () => void;
 }
@@ -86,6 +86,8 @@ export function PlannerView({
   const [subView, setSubView] = useState<'select' | 'schedule'>('select');
   const [selectedTag, setSelectedTag] = useState('All');
   const [customizingMeal, setCustomizingMeal] = useState<Meal | null>(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const selectedSet = useMemo(() => new Set(selectedMealIds), [selectedMealIds]);
   const mealById = useMemo(() => new Map(meals.map((m) => [m.id, m])), [meals]);
@@ -115,6 +117,21 @@ export function PlannerView({
 
   const count = selectedMealIds.length;
   const scheduledDaysCount = scheduleSlots.length;
+  const customizedMealsCount = Object.keys(customizations).length;
+  const hasAnythingPlanned =
+    count > 0 || scheduledDaysCount > 0 || customizedMealsCount > 0;
+
+  const handleConfirmResetPlan = async () => {
+    setResetting(true);
+    try {
+      await onClearPlan();
+      setConfirmingReset(false);
+      setSelectedTag('All');
+      setCustomizingMeal(null);
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const rangeLabel =
     subView === 'schedule'
@@ -145,18 +162,6 @@ export function PlannerView({
             <span>Kroger Sales</span>
           </button>
 
-          {subView === 'select' && count > 0 && (
-            <button
-              id="clear-plan-btn"
-              type="button"
-              onClick={onClearPlan}
-              className="inline-flex items-center gap-1.5 h-10 px-3 rounded-xl text-xs font-semibold text-[#5C6961] bg-white border border-[#E6E1D6] hover:bg-[#F3EFE6] transition-colors cursor-pointer"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Clear ({count})
-            </button>
-          )}
-
           {subView === 'schedule' && scheduledDaysCount > 0 && (
             <button
               id="clear-schedule-btn"
@@ -165,11 +170,66 @@ export function PlannerView({
               className="inline-flex items-center gap-1.5 h-10 px-3 rounded-xl text-xs font-semibold text-[#5C6961] bg-white border border-[#E6E1D6] hover:bg-[#F3EFE6] transition-colors cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              Clear Schedule
+              Clear Days
+            </button>
+          )}
+
+          {hasAnythingPlanned && (
+            <button
+              id="clear-plan-btn"
+              type="button"
+              disabled={resetting}
+              onClick={() => setConfirmingReset((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 h-10 px-3 rounded-xl text-xs font-semibold bg-white border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60 transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Start Over</span>
             </button>
           )}
         </div>
       </div>
+
+      {/* Inline confirmation banner for clearing the entire meal planning screen */}
+      {confirmingReset && hasAnythingPlanned && (
+        <div
+          id="confirm-reset-meal-plan-banner"
+          role="alert"
+          className="rounded-2xl border border-red-200 bg-red-50/90 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="text-xs sm:text-sm text-red-900">
+            <span className="font-bold">Clear meal plan and start over?</span>{' '}
+            <span className="text-red-700">
+              This resets {count} selected {count === 1 ? 'meal' : 'meals'}
+              {customizedMealsCount > 0
+                ? `, ${customizedMealsCount} customized ${customizedMealsCount === 1 ? 'meal' : 'meals'}`
+                : ''}
+              {scheduledDaysCount > 0
+                ? `, and all ${scheduledDaysCount} scheduled ${scheduledDaysCount === 1 ? 'day' : 'days'} (including MYOD & Restaurant)`
+                : ''}
+              .
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={resetting}
+              onClick={() => setConfirmingReset(false)}
+              className="h-9 px-3 rounded-xl text-xs font-semibold bg-white border border-[#E6E1D6] text-[#5C6961] hover:bg-[#F8F6F1] transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              id="confirm-reset-meal-plan-btn"
+              type="button"
+              disabled={resetting}
+              onClick={() => void handleConfirmResetPlan()}
+              className="h-9 px-3.5 rounded-xl text-xs font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-60 transition-colors cursor-pointer"
+            >
+              {resetting ? 'Clearing...' : 'Yes, Start Over'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Segmented Switch: Select Meals vs 2-Week Schedule */}
       <div
@@ -363,15 +423,18 @@ export function PlannerView({
                             <Salad className="w-3 h-3" />+ {side.name}
                           </span>
                         ))}
-                        {swapEntries.map(([orig, rep]) => (
-                          <span
-                            key={orig}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-[#FDF3EB] text-[#8A421A] border border-[#F0CFAF]"
-                          >
-                            <ArrowLeftRight className="w-3 h-3" />
-                            {rep}
-                          </span>
-                        ))}
+                        {swapEntries.map(([orig, reps]) => {
+                          const label = Array.isArray(reps) ? reps.join(' + ') : String(reps);
+                          return (
+                            <span
+                              key={orig}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-[#FDF3EB] text-[#8A421A] border border-[#F0CFAF]"
+                            >
+                              <ArrowLeftRight className="w-3 h-3 shrink-0" />
+                              {label}
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </button>
@@ -545,14 +608,19 @@ export function PlannerView({
                                       + {s.name}
                                     </span>
                                   ))}
-                                  {swapEntries.map(([orig, rep]) => (
-                                    <span
-                                      key={orig}
-                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-[#FDF3EB] text-[#8A421A]"
-                                    >
-                                      ⇄ {rep}
-                                    </span>
-                                  ))}
+                                  {swapEntries.map(([orig, reps]) => {
+                                    const label = Array.isArray(reps)
+                                      ? reps.join(' + ')
+                                      : String(reps);
+                                    return (
+                                      <span
+                                        key={orig}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-[#FDF3EB] text-[#8A421A]"
+                                      >
+                                        ⇄ {label}
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>

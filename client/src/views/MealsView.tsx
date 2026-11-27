@@ -5,20 +5,28 @@ import {
   Check,
   Clock,
   Edit3,
+  ExternalLink,
+  Globe,
+  Link2,
   Plus,
+  RefreshCw,
   Search,
   Sparkles,
   Trash2,
   Utensils,
   X,
 } from 'lucide-react';
-import type { Meal, MealIdea, MealPayload } from '../types';
+import type { Meal, MealIdea, MealIdeasFeedResponse, MealPayload } from '../types';
 import { MealFormModal } from '../components/MealFormModal';
 import { normalizeIngKey } from '../utils/variants';
 
 interface MealsViewProps {
   meals: Meal[];
-  mealIdeas: MealIdea[];
+  mealIdeasFeed: MealIdeasFeedResponse | null;
+  refreshingIdeas: boolean;
+  onRefreshMealIdeas: () => Promise<void>;
+  onSearchWebIdeas: (query: string) => Promise<MealIdea[]>;
+  onImportRecipeUrl: (url: string) => Promise<MealIdea | null>;
   initialSubTab?: 'library' | 'ideas';
   onSubTabChange?: (subTab: 'library' | 'ideas') => void;
   onCreateMeal: (payload: MealPayload) => Promise<void>;
@@ -27,9 +35,27 @@ interface MealsViewProps {
   onAddMealIdea: (idea: MealIdea) => Promise<void>;
 }
 
+function formatRelativeTime(iso: string | null): string {
+  if (!iso) return 'Not refreshed yet';
+  const ts = Date.parse(iso);
+  if (!Number.isFinite(ts)) return '';
+  const diffMs = Math.max(0, Date.now() - ts);
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'Updated just now';
+  if (mins < 60) return `Updated ${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `Updated ${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `Updated ${days}d ago`;
+}
+
 export function MealsView({
   meals,
-  mealIdeas,
+  mealIdeasFeed,
+  refreshingIdeas,
+  onRefreshMealIdeas,
+  onSearchWebIdeas,
+  onImportRecipeUrl,
   initialSubTab = 'library',
   onSubTabChange,
   onCreateMeal,
@@ -42,11 +68,18 @@ export function MealsView({
   const [selectedTag, setSelectedTag] = useState('All');
   const [ideaSearch, setIdeaSearch] = useState('');
   const [selectedIdeaTag, setSelectedIdeaTag] = useState('All');
+  const [selectedSource, setSelectedSource] = useState('All');
   const [hideAddedIdeas, setHideAddedIdeas] = useState(false);
   const [addingIdeaId, setAddingIdeaId] = useState<string | null>(null);
+  const [searchingWeb, setSearchingWeb] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importingUrl, setImportingUrl] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  const mealIdeas = mealIdeasFeed?.ideas ?? [];
 
   useEffect(() => {
     setSubTab(initialSubTab);
@@ -78,6 +111,34 @@ export function MealsView({
     () => ideasWithStatus.filter((idea) => !idea.inLibrary).length,
     [ideasWithStatus]
   );
+
+  const liveIdeasCount = useMemo(
+    () => ideasWithStatus.filter((idea) => idea.isLive).length,
+    [ideasWithStatus]
+  );
+
+  const sourceOptions = useMemo(() => {
+    const liveSources = new Set<string>();
+    let hasCurated = false;
+    for (const idea of mealIdeas) {
+      if (idea.isLive && idea.sourceName) {
+        liveSources.add(idea.sourceName);
+      } else {
+        hasCurated = true;
+      }
+    }
+    const opts: string[] = ['All'];
+    if (liveSources.size > 0) {
+      opts.push('Live Web');
+      for (const s of Array.from(liveSources).sort((a, b) => a.localeCompare(b))) {
+        opts.push(s);
+      }
+    }
+    if (hasCurated) {
+      opts.push('Curated');
+    }
+    return opts;
+  }, [mealIdeas]);
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -124,15 +185,29 @@ export function MealsView({
     const q = ideaSearch.trim().toLowerCase();
     return ideasWithStatus.filter((idea) => {
       if (hideAddedIdeas && idea.inLibrary) return false;
+
+      if (selectedSource === 'Live Web' && !idea.isLive) return false;
+      if (selectedSource === 'Curated' && idea.isLive) return false;
+      if (
+        selectedSource !== 'All' &&
+        selectedSource !== 'Live Web' &&
+        selectedSource !== 'Curated' &&
+        idea.sourceName !== selectedSource
+      ) {
+        return false;
+      }
+
       const matchesTag =
         selectedIdeaTag === 'All' ||
         idea.tags.some((t) => t.toLowerCase() === selectedIdeaTag.toLowerCase());
       if (!matchesTag) return false;
+
       if (!q) return true;
       return (
         idea.name.toLowerCase().includes(q) ||
         idea.notes.toLowerCase().includes(q) ||
         idea.prepTime.toLowerCase().includes(q) ||
+        idea.sourceName.toLowerCase().includes(q) ||
         idea.tags.some((t) => t.toLowerCase().includes(q)) ||
         idea.ingredients.some(
           (i) =>
@@ -141,7 +216,7 @@ export function MealsView({
         )
       );
     });
-  }, [ideasWithStatus, hideAddedIdeas, ideaSearch, selectedIdeaTag]);
+  }, [ideasWithStatus, hideAddedIdeas, selectedSource, ideaSearch, selectedIdeaTag]);
 
   const openCreate = () => {
     setEditingMeal(null);
@@ -171,6 +246,39 @@ export function MealsView({
     }
   };
 
+  const handleWebSearchSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const q = ideaSearch.trim();
+    if (q.length < 2 || searchingWeb) return;
+    setSearchingWeb(true);
+    try {
+      setSelectedSource('All');
+      setSelectedIdeaTag('All');
+      await onSearchWebIdeas(q);
+    } finally {
+      setSearchingWeb(false);
+    }
+  };
+
+  const handleImportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = importUrl.trim();
+    if (!trimmed || importingUrl) return;
+    setImportingUrl(true);
+    try {
+      const imported = await onImportRecipeUrl(trimmed);
+      if (imported) {
+        setImportUrl('');
+        setImportOpen(false);
+        setSelectedSource('All');
+        setSelectedIdeaTag('All');
+        setIdeaSearch('');
+      }
+    } finally {
+      setImportingUrl(false);
+    }
+  };
+
   return (
     <section className="space-y-5">
       {/* Header row */}
@@ -181,7 +289,9 @@ export function MealsView({
           </h1>
           <p className="text-sm text-[#5C6961] mt-1">
             {subTab === 'ideas'
-              ? `${availableIdeasCount} fresh dinner ${availableIdeasCount === 1 ? 'idea' : 'ideas'} ready to add to your library in one tap`
+              ? liveIdeasCount > 0
+                ? `${liveIdeasCount} live web recipes & ${availableIdeasCount} total ideas ready to add in one tap`
+                : `${availableIdeasCount} fresh dinner ${availableIdeasCount === 1 ? 'idea' : 'ideas'} ready to add to your library in one tap`
               : `${meals.length} saved family ${meals.length === 1 ? 'meal' : 'meals'} ready for planning`}
           </p>
         </div>
@@ -478,30 +588,157 @@ export function MealsView({
       ) : (
         /* Meal Ideas Tab */
         <div className="space-y-4">
-          {/* Search & Filters */}
-          <div className="space-y-3">
-            <div className="relative">
-              <Search className="w-4.5 h-4.5 text-[#85918A] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                id="meal-ideas-search-input"
-                type="search"
-                placeholder="Search meal ideas, cuisines, or ingredients..."
-                value={ideaSearch}
-                onChange={(e) => setIdeaSearch(e.target.value)}
-                className="w-full h-11 pl-10 pr-10 rounded-2xl bg-white border border-[#E6E1D6] text-sm text-[#1A241E] placeholder:text-[#8A948D] focus:border-[#1B5E42] focus:ring-2 focus:ring-[#1B5E42]/15 focus:outline-none transition-all shadow-[0_1px_2px_rgba(26,36,30,0.03)]"
-              />
-              {ideaSearch && (
-                <button
-                  type="button"
-                  onClick={() => setIdeaSearch('')}
-                  aria-label="Clear meal ideas search"
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center text-[#85918A] hover:bg-[#F3EFE6] cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
+          {/* Live Web Feed Status & Action Bar */}
+          <div className="rounded-2xl bg-white border border-[#E6E1D6] p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-[0_1px_2px_rgba(26,36,30,0.03)]">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <span className="w-9 h-9 rounded-xl bg-[#EBF4EF] text-[#1B5E42] flex items-center justify-center shrink-0">
+                <Globe className="w-4.5 h-4.5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs sm:text-sm font-bold text-[#1A241E]">
+                  {refreshingIdeas
+                    ? 'Pulling fresh recipes from recipe websites...'
+                    : liveIdeasCount > 0
+                    ? `Live Recipes (${liveIdeasCount}) + Curated Classics`
+                    : 'Live Recipe Discovery'}
+                </p>
+                <p className="text-xs text-[#5C6961] mt-0.5">
+                  Auto-updates from Budget Bytes, Skinnytaste, Pinch of Yum, RecipeTin Eats,
+                  Natasha&apos;s Kitchen &amp; TheMealDB
+                  {mealIdeasFeed?.lastRefreshedAt
+                    ? ` · ${formatRelativeTime(mealIdeasFeed.lastRefreshedAt)}`
+                    : ''}
+                </p>
+              </div>
             </div>
 
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <button
+                id="toggle-import-recipe-url-btn"
+                type="button"
+                onClick={() => setImportOpen((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold border transition-colors cursor-pointer ${
+                  importOpen
+                    ? 'bg-[#EBF4EF] border-[#C4DDD0] text-[#1B5E42]'
+                    : 'bg-white border-[#E6E1D6] text-[#5C6961] hover:text-[#1A241E] hover:bg-[#FAF8F4]'
+                }`}
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span>Import URL</span>
+              </button>
+              <button
+                id="refresh-meal-ideas-btn"
+                type="button"
+                disabled={refreshingIdeas}
+                onClick={() => void onRefreshMealIdeas()}
+                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-xs font-semibold bg-[#1B5E42] text-white hover:bg-[#144A33] disabled:opacity-60 transition-colors cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshingIdeas ? 'animate-spin' : ''}`} />
+                <span>{refreshingIdeas ? 'Refreshing...' : 'Refresh Ideas'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Import Any Recipe URL Inline Form */}
+          {importOpen && (
+            <form
+              onSubmit={handleImportSubmit}
+              className="rounded-2xl bg-[#FAF8F4] border border-[#E6E1D6] p-3.5 space-y-2"
+            >
+              <label
+                htmlFor="import-recipe-url-input"
+                className="block text-xs font-bold text-[#1A241E]"
+              >
+                Paste any recipe link to extract ingredients automatically
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  id="import-recipe-url-input"
+                  type="url"
+                  required
+                  placeholder="https://www.budgetbytes.com/..."
+                  value={importUrl}
+                  onChange={(e) => setImportUrl(e.target.value)}
+                  className="flex-1 h-10 px-3 rounded-xl bg-white border border-[#D8D2C5] text-sm text-[#1A241E] placeholder:text-[#8A948D] focus:border-[#1B5E42] focus:outline-none"
+                />
+                <button
+                  id="submit-import-recipe-url-btn"
+                  type="submit"
+                  disabled={importingUrl || !importUrl.trim()}
+                  className="h-10 px-4 rounded-xl bg-[#1B5E42] text-white text-xs font-semibold hover:bg-[#144A33] disabled:opacity-50 transition-colors shrink-0 cursor-pointer"
+                >
+                  {importingUrl ? 'Importing...' : 'Import Recipe'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Search (Instant Filter + Live Web Search) & Filters */}
+          <div className="space-y-3">
+            <form onSubmit={handleWebSearchSubmit} className="relative flex gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4.5 h-4.5 text-[#85918A] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  id="meal-ideas-search-input"
+                  type="search"
+                  placeholder="Filter ideas or search live recipes (e.g. lasagna, curry, shrimp)..."
+                  value={ideaSearch}
+                  onChange={(e) => setIdeaSearch(e.target.value)}
+                  className="w-full h-11 pl-10 pr-10 rounded-2xl bg-white border border-[#E6E1D6] text-sm text-[#1A241E] placeholder:text-[#8A948D] focus:border-[#1B5E42] focus:ring-2 focus:ring-[#1B5E42]/15 focus:outline-none transition-all shadow-[0_1px_2px_rgba(26,36,30,0.03)]"
+                />
+                {ideaSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setIdeaSearch('')}
+                    aria-label="Clear meal ideas search"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center text-[#85918A] hover:bg-[#F3EFE6] cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {ideaSearch.trim().length >= 2 && (
+                <button
+                  id="search-web-ideas-btn"
+                  type="submit"
+                  disabled={searchingWeb}
+                  className="inline-flex items-center gap-1.5 h-11 px-4 rounded-2xl bg-[#FDF3EB] border border-[#F0CFAF] text-[#8A421A] hover:bg-[#F9E6D4] disabled:opacity-60 text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                >
+                  <Globe className={`w-4 h-4 ${searchingWeb ? 'animate-spin' : ''}`} />
+                  <span>{searchingWeb ? 'Searching...' : 'Search Web'}</span>
+                </button>
+              )}
+            </form>
+
+            {/* Source filter pills */}
+            {sourceOptions.length > 2 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#85918A] mr-1 shrink-0">
+                  Source
+                </span>
+                {sourceOptions.map((src) => {
+                  const active = selectedSource === src;
+                  return (
+                    <button
+                      key={src}
+                      type="button"
+                      data-testid={`idea-source-filter-${src}`}
+                      onClick={() => setSelectedSource(src)}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap border transition-all cursor-pointer ${
+                        active
+                          ? 'bg-[#1A241E] text-white border-[#1A241E]'
+                          : 'bg-white text-[#5C6961] border-[#E6E1D6] hover:border-[#1A241E]/40 hover:text-[#1A241E]'
+                      }`}
+                    >
+                      {src}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Tag filter pills + hide added toggle */}
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5 max-w-full">
                 {allIdeaTags.map((tag) => {
@@ -548,21 +785,36 @@ export function MealsView({
               </div>
               <h2 className="text-base font-bold text-[#1A241E]">
                 {availableIdeasCount === 0 && hideAddedIdeas
-                  ? 'All curated meal ideas are in your library!'
-                  : 'No matching meal ideas'}
+                  ? 'All loaded meal ideas are in your library!'
+                  : 'No matching meal ideas loaded yet'}
               </h2>
-              <p className="text-sm text-[#5C6961] mt-1 max-w-xs mx-auto">
-                {availableIdeasCount === 0 && hideAddedIdeas
-                  ? 'Switch to your Meal Library to plan or customize any of them.'
-                  : 'Try clearing your search or tag filter to see more dinner inspiration.'}
+              <p className="text-sm text-[#5C6961] mt-1 max-w-sm mx-auto">
+                {ideaSearch.trim().length >= 2
+                  ? `Search online recipes for "${ideaSearch.trim()}" or clear your filters to browse all ideas.`
+                  : 'Try refreshing for fresh web recipes or clearing your current filters.'}
               </p>
-              <div className="mt-4 flex items-center justify-center gap-2">
-                {(ideaSearch || selectedIdeaTag !== 'All' || hideAddedIdeas) && (
+              <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+                {ideaSearch.trim().length >= 2 && (
+                  <button
+                    type="button"
+                    disabled={searchingWeb}
+                    onClick={() => void handleWebSearchSubmit()}
+                    className="h-10 px-4 rounded-xl text-sm font-semibold bg-[#1B5E42] text-white hover:bg-[#144A33] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Globe className="w-4 h-4" />
+                    Search Web for &ldquo;{ideaSearch.trim()}&rdquo;
+                  </button>
+                )}
+                {(ideaSearch ||
+                  selectedIdeaTag !== 'All' ||
+                  selectedSource !== 'All' ||
+                  hideAddedIdeas) && (
                   <button
                     type="button"
                     onClick={() => {
                       setIdeaSearch('');
                       setSelectedIdeaTag('All');
+                      setSelectedSource('All');
                       setHideAddedIdeas(false);
                     }}
                     className="h-10 px-4 rounded-xl text-sm font-semibold bg-[#EBF4EF] text-[#1B5E42] hover:bg-[#DCECE3] transition-colors cursor-pointer"
@@ -586,8 +838,61 @@ export function MealsView({
                         : 'bg-white border-[#E6E1D6] shadow-[0_1px_3px_rgba(26,36,30,0.04)] hover:border-[#C4DDD0] hover:shadow-[0_6px_20px_rgba(26,36,30,0.06)]'
                     }`}
                   >
+                    {idea.imageUrl && (
+                      <div className="relative w-full h-40 bg-[#FAF8F4] border-b border-[#F1EDE4] overflow-hidden">
+                        <img
+                          src={idea.imageUrl}
+                          alt={idea.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#1A241E]/80 text-white backdrop-blur-xs shadow-xs">
+                            <Globe className="w-3 h-3" />
+                            {idea.sourceName}
+                          </span>
+                          {idea.sourceUrl && (
+                            <a
+                              href={idea.sourceUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`View original ${idea.name} recipe on ${idea.sourceName}`}
+                              title={`Open original recipe on ${idea.sourceName}`}
+                              className="w-7 h-7 rounded-full bg-white/90 text-[#1A241E] hover:bg-white flex items-center justify-center shadow-xs transition-colors"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="p-4 flex flex-col justify-between flex-1">
                       <div>
+                        {!idea.imageUrl && (
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-[#F5F2EB] text-[#5C6961]">
+                              {idea.isLive ? (
+                                <Globe className="w-2.5 h-2.5" />
+                              ) : (
+                                <Sparkles className="w-2.5 h-2.5" />
+                              )}
+                              {idea.sourceName || 'Curated'}
+                            </span>
+                            {idea.sourceUrl && (
+                              <a
+                                href={idea.sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1B5E42] hover:underline"
+                              >
+                                Recipe
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        )}
+
                         <div className="flex items-start justify-between gap-2">
                           <h2 className="text-base font-bold text-[#1A241E] leading-snug">
                             {idea.name}

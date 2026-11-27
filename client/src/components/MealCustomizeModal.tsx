@@ -10,7 +10,11 @@ import {
   X,
 } from 'lucide-react';
 import type { Meal, MealCustomization, MealSideItem, QuickSidePreset } from '../types';
-import { normalizeIngKey, resolveIngredientVariantOptions } from '../utils/variants';
+import {
+  normalizeIngKey,
+  normalizeSwapList,
+  resolveIngredientVariantOptions,
+} from '../utils/variants';
 
 interface MealCustomizeModalProps {
   meal: Meal | null;
@@ -21,7 +25,7 @@ interface MealCustomizeModalProps {
   onClose: () => void;
   onSave: (
     mealId: number,
-    payload: { sides: MealSideItem[]; swaps: Record<string, string> }
+    payload: { sides: MealSideItem[]; swaps: Record<string, string[]> }
   ) => Promise<void>;
 }
 
@@ -35,7 +39,7 @@ export function MealCustomizeModal({
   onSave,
 }: MealCustomizeModalProps) {
   const [sides, setSides] = useState<MealSideItem[]>([]);
-  const [swaps, setSwaps] = useState<Record<string, string>>({});
+  const [swaps, setSwaps] = useState<Record<string, string[]>>({});
   const [customSideName, setCustomSideName] = useState('');
   const [customSideQty, setCustomSideQty] = useState('1');
   const [customSideUnit, setCustomSideUnit] = useState('bag');
@@ -59,7 +63,14 @@ export function MealCustomizeModal({
   useEffect(() => {
     if (!meal) return;
     setSides(initialCustomization?.sides ? [...initialCustomization.sides] : []);
-    setSwaps(initialCustomization?.swaps ? { ...initialCustomization.swaps } : {});
+    const initialSwaps: Record<string, string[]> = {};
+    if (initialCustomization?.swaps) {
+      for (const [k, v] of Object.entries(initialCustomization.swaps)) {
+        const list = normalizeSwapList(v);
+        if (list.length > 0) initialSwaps[k] = list;
+      }
+    }
+    setSwaps(initialSwaps);
     setCustomSideName('');
     setCustomSideQty('1');
     setCustomSideUnit('bag');
@@ -196,16 +207,73 @@ export function MealCustomizeModal({
     setSides((prev) => prev.filter((s) => s.id !== id));
   };
 
-  const applySwap = (origIngName: string, nextName: string) => {
+  const toggleVariantSwap = (origIngName: string, option: string) => {
     const key = normalizeIngKey(origIngName);
-    const trimmed = nextName.trim();
+    const trimmed = option.trim().replace(/\s+/g, ' ');
+    if (!trimmed) return;
+    const optNorm = normalizeIngKey(trimmed);
+
     setSwaps((prev) => {
       const next = { ...prev };
-      if (!trimmed || normalizeIngKey(trimmed) === key) {
+      const current = prev[key] ?? [];
+
+      // When unmodified (using original ingredient by default):
+      if (current.length === 0) {
+        if (optNorm === key) {
+          return prev; // Already using the default original ingredient
+        }
+        // Single tap on a variant swaps to that variant; subsequent taps add more variants
+        next[key] = [trimmed];
+        return next;
+      }
+
+      // Already has 1+ selected variants: toggle this option on/off
+      const exists = current.some((item) => normalizeIngKey(item) === optNorm);
+      const updated = exists
+        ? current.filter((item) => normalizeIngKey(item) !== optNorm)
+        : [...current, trimmed];
+
+      // Empty selection or only the original ingredient resets cleanly to default
+      if (
+        updated.length === 0 ||
+        (updated.length === 1 && normalizeIngKey(updated[0]) === key)
+      ) {
         delete next[key];
       } else {
-        next[key] = trimmed;
+        next[key] = updated;
       }
+      return next;
+    });
+  };
+
+  const addCustomVariantSwap = (origIngName: string, customName: string) => {
+    const key = normalizeIngKey(origIngName);
+    const trimmed = customName.trim().replace(/\s+/g, ' ');
+    if (!trimmed) return;
+    const optNorm = normalizeIngKey(trimmed);
+
+    setSwaps((prev) => {
+      const next = { ...prev };
+      const current = prev[key] ?? [];
+      if (current.length === 0) {
+        if (optNorm === key) return prev;
+        next[key] = [trimmed];
+        return next;
+      }
+      if (current.some((item) => normalizeIngKey(item) === optNorm)) {
+        return prev;
+      }
+      next[key] = [...current, trimmed];
+      return next;
+    });
+  };
+
+  const resetIngredientSwap = (origIngName: string) => {
+    const key = normalizeIngKey(origIngName);
+    setSwaps((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
       return next;
     });
   };
@@ -613,20 +681,25 @@ export function MealCustomizeModal({
 
           {/* Section 2: Swap Common Ingredient Variants */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-7 h-7 rounded-lg bg-[#FDF3EB] text-[#B85D2B] flex items-center justify-center">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2">
+                <span className="w-7 h-7 rounded-lg bg-[#FDF3EB] text-[#B85D2B] flex items-center justify-center shrink-0 mt-0.5">
                   <ArrowLeftRight className="w-4 h-4" />
                 </span>
-                <h3 className="text-sm font-bold text-[#1A241E]">
-                  Swap Ingredient Variants ({swapCount} active)
-                </h3>
+                <div>
+                  <h3 className="text-sm font-bold text-[#1A241E]">
+                    Swap Ingredient Variants ({swapCount} active)
+                  </h3>
+                  <p className="text-[11px] text-[#5C6961]">
+                    Tap one or multiple variants — every selected variant will be added to your grocery list.
+                  </p>
+                </div>
               </div>
               {swapCount > 0 && (
                 <button
                   type="button"
                   onClick={() => setSwaps({})}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#5C6961] hover:text-[#1A241E] cursor-pointer"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#5C6961] hover:text-[#1A241E] shrink-0 cursor-pointer"
                 >
                   <RotateCcw className="w-3 h-3" />
                   Reset swaps
@@ -637,40 +710,55 @@ export function MealCustomizeModal({
             <div className="space-y-2.5">
               {meal.ingredients.map((ing, idx) => {
                 const key = normalizeIngKey(ing.name);
-                const swappedTo = swaps[key];
+                const selectedSwaps = swaps[key] ?? [];
+                const isSwapped = selectedSwaps.length > 0;
+                const includesOriginal =
+                  !isSwapped ||
+                  selectedSwaps.some((item) => normalizeIngKey(item) === key);
                 const { categoryLabel, manualOptions, suggestedOptions } =
                   resolveIngredientVariantOptions(ing.name, ing.alternatives);
                 const hasManual = manualOptions.length > 0;
                 const isCustomEditing = editingIngKey === key;
 
-                const isOptionActive = (option: string) =>
-                  (swappedTo && normalizeIngKey(swappedTo) === normalizeIngKey(option)) ||
-                  (!swappedTo && normalizeIngKey(ing.name) === normalizeIngKey(option));
+                const isOptionActive = (option: string) => {
+                  const optNorm = normalizeIngKey(option);
+                  if (isSwapped) {
+                    return selectedSwaps.some((item) => normalizeIngKey(item) === optNorm);
+                  }
+                  return optNorm === key;
+                };
 
                 return (
                   <div
                     key={`${key}-${idx}`}
                     data-testid={`swap-row-${key}`}
                     className={`rounded-2xl border p-3 space-y-2 ${
-                      swappedTo
+                      isSwapped
                         ? 'border-[#F0CFAF] bg-[#FDF3EB]/60'
                         : 'border-[#E6E1D6] bg-[#FAF8F4]/70'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 space-y-1.5">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span
                             className={`text-xs sm:text-sm font-bold ${
-                              swappedTo ? 'line-through text-[#85918A]' : 'text-[#1A241E]'
+                              isSwapped && !includesOriginal
+                                ? 'line-through text-[#85918A]'
+                                : 'text-[#1A241E]'
                             }`}
                           >
                             {ing.quantity}
                             {ing.unit ? ` ${ing.unit}` : ''} {ing.name}
                           </span>
-                          {swappedTo && (
+                          {isSwapped && selectedSwaps.length === 1 && (
                             <span className="text-xs sm:text-sm font-bold text-[#8A421A]">
-                              → {swappedTo}
+                              → {selectedSwaps[0]}
+                            </span>
+                          )}
+                          {isSwapped && selectedSwaps.length > 1 && (
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#1B5E42] text-white tabular-nums">
+                              {selectedSwaps.length} selected
                             </span>
                           )}
                           {hasManual && (
@@ -684,13 +772,38 @@ export function MealCustomizeModal({
                             </span>
                           )}
                         </div>
+
+                        {/* Show removable chips whenever multiple variants (or custom ones) are selected */}
+                        {isSwapped && selectedSwaps.length > 1 && (
+                          <div
+                            data-testid={`selected-swaps-${key}`}
+                            className="flex flex-wrap gap-1.5"
+                          >
+                            {selectedSwaps.map((chosen) => (
+                              <span
+                                key={chosen}
+                                className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-[11px] font-semibold bg-[#8A421A] text-white"
+                              >
+                                <span>{chosen}</span>
+                                <button
+                                  type="button"
+                                  aria-label={`Remove ${chosen}`}
+                                  onClick={() => toggleVariantSwap(ing.name, chosen)}
+                                  className="w-4 h-4 rounded-full hover:bg-white/20 flex items-center justify-center cursor-pointer"
+                                >
+                                  <X className="w-2.5 h-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
-                        {swappedTo && (
+                        {isSwapped && (
                           <button
                             type="button"
-                            onClick={() => applySwap(ing.name, '')}
+                            onClick={() => resetIngredientSwap(ing.name)}
                             className="h-7 px-2 rounded-lg text-[11px] font-semibold text-[#8A421A] hover:bg-white cursor-pointer"
                           >
                             Reset
@@ -703,12 +816,12 @@ export function MealCustomizeModal({
                               setEditingIngKey(null);
                             } else {
                               setEditingIngKey(key);
-                              setCustomSwapText(swappedTo || '');
+                              setCustomSwapText('');
                             }
                           }}
                           className="h-7 px-2.5 rounded-lg text-[11px] font-semibold bg-white border border-[#E6E1D6] text-[#5C6961] hover:text-[#1B5E42] hover:border-[#1B5E42] cursor-pointer"
                         >
-                          {isCustomEditing ? 'Done' : 'Custom'}
+                          {isCustomEditing ? 'Done' : '+ Custom'}
                         </button>
                       </div>
                     </div>
@@ -721,15 +834,17 @@ export function MealCustomizeModal({
                             <button
                               key={option}
                               type="button"
+                              aria-pressed={isCurrent}
                               data-testid={`swap-option-${key}-${option}`}
-                              onClick={() => applySwap(ing.name, option)}
-                              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+                              onClick={() => toggleVariantSwap(ing.name, option)}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
                                 isCurrent
-                                  ? 'bg-[#1B5E42] text-white border-[#1B5E42]'
+                                  ? 'bg-[#1B5E42] text-white border-[#1B5E42] shadow-2xs'
                                   : 'bg-white text-[#8A421A] border-[#F0CFAF] hover:border-[#B85D2B] hover:bg-[#FDF3EB]'
                               }`}
                             >
-                              {option}
+                              {isCurrent && <Check className="w-3 h-3 stroke-[2.75]" />}
+                              <span>{option}</span>
                             </button>
                           );
                         })}
@@ -750,15 +865,17 @@ export function MealCustomizeModal({
                               <button
                                 key={option}
                                 type="button"
+                                aria-pressed={isCurrent}
                                 data-testid={`swap-option-${key}-${option}`}
-                                onClick={() => applySwap(ing.name, option)}
-                                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+                                onClick={() => toggleVariantSwap(ing.name, option)}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
                                   isCurrent
-                                    ? 'bg-[#1B5E42] text-white border-[#1B5E42]'
+                                    ? 'bg-[#1B5E42] text-white border-[#1B5E42] shadow-2xs'
                                     : 'bg-white text-[#39453E] border-[#E6E1D6] hover:border-[#1B5E42]'
                                 }`}
                               >
-                                {option}
+                                {isCurrent && <Check className="w-3 h-3 stroke-[2.75]" />}
+                                <span>{option}</span>
                               </button>
                             );
                           })}
@@ -770,27 +887,28 @@ export function MealCustomizeModal({
                       <div className="flex gap-2 pt-1">
                         <input
                           type="text"
-                          placeholder={`Swap "${ing.name}" with...`}
+                          placeholder={`Add custom variant for "${ing.name}"...`}
                           value={customSwapText}
                           onChange={(e) => setCustomSwapText(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
-                              applySwap(ing.name, customSwapText);
-                              setEditingIngKey(null);
+                              addCustomVariantSwap(ing.name, customSwapText);
+                              setCustomSwapText('');
                             }
                           }}
                           className="flex-1 h-9 px-3 rounded-xl border border-[#D8D2C5] bg-white text-xs text-[#1A241E] focus:border-[#1B5E42] focus:outline-none"
                         />
                         <button
                           type="button"
+                          disabled={!customSwapText.trim()}
                           onClick={() => {
-                            applySwap(ing.name, customSwapText);
-                            setEditingIngKey(null);
+                            addCustomVariantSwap(ing.name, customSwapText);
+                            setCustomSwapText('');
                           }}
-                          className="h-9 px-3 rounded-xl bg-[#1B5E42] text-white text-xs font-semibold cursor-pointer"
+                          className="h-9 px-3 rounded-xl bg-[#1B5E42] text-white disabled:opacity-45 text-xs font-semibold cursor-pointer"
                         >
-                          Apply
+                          Add
                         </button>
                       </div>
                     )}

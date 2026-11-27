@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db/database.js';
+import { normalizeSwapsRecord } from './plan.js';
 import {
   computeDefaultCartQuantity,
   consolidateIngredients,
@@ -152,17 +153,23 @@ groceryListRouter.post('/generate', (req, res) => {
       number,
       {
         sides: Array<{ name: string; quantity: number; unit: string }>;
-        swaps: Record<string, string>;
+        swaps: Record<string, string[]>;
       }
     >();
     for (const c of custRows) {
+      let parsedSwaps: unknown = {};
+      try {
+        parsedSwaps = JSON.parse(c.swaps || '{}');
+      } catch {
+        parsedSwaps = {};
+      }
       customByMealId.set(c.meal_id, {
         sides: JSON.parse(c.sides || '[]') as Array<{
           name: string;
           quantity: number;
           unit: string;
         }>,
-        swaps: JSON.parse(c.swaps || '{}') as Record<string, string>,
+        swaps: normalizeSwapsRecord(parsedSwaps),
       });
     }
 
@@ -190,16 +197,19 @@ groceryListRouter.post('/generate', (req, res) => {
     for (const row of mealIngRows) {
       const occurrences = Math.max(1, countByMealId.get(row.meal_id) ?? 1);
       const custom = customByMealId.get(row.meal_id);
-      const swappedName = custom?.swaps?.[row.normalized_name]?.trim();
-      const effectiveName = swappedName || row.name;
+      const swappedNames = custom?.swaps?.[row.normalized_name];
+      const effectiveNames =
+        swappedNames && swappedNames.length > 0 ? swappedNames : [row.name];
 
-      for (let i = 0; i < occurrences; i++) {
-        inputs.push({
-          name: effectiveName,
-          quantity: row.quantity,
-          unit: row.unit,
-          source: occurrences > 1 ? `${row.meal_name} (×${occurrences})` : row.meal_name,
-        });
+      for (const effectiveName of effectiveNames) {
+        for (let i = 0; i < occurrences; i++) {
+          inputs.push({
+            name: effectiveName,
+            quantity: row.quantity,
+            unit: row.unit,
+            source: occurrences > 1 ? `${row.meal_name} (×${occurrences})` : row.meal_name,
+          });
+        }
       }
     }
 

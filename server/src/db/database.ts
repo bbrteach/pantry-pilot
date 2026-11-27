@@ -147,6 +147,20 @@ export function initializeDatabase(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (meal_id) REFERENCES meals(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS meal_ideas_cache (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      prep_time TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
+      image_url TEXT NOT NULL DEFAULT '',
+      source_name TEXT NOT NULL DEFAULT '',
+      source_url TEXT NOT NULL DEFAULT '',
+      ingredients TEXT NOT NULL DEFAULT '[]',
+      published_at TEXT NOT NULL DEFAULT '',
+      fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   const mealCols = db.prepare('PRAGMA table_info(meals)').all() as Array<{ name: string }>;

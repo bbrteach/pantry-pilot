@@ -13,7 +13,45 @@ export interface MealSideItem {
 export interface MealCustomization {
   mealId: number;
   sides: MealSideItem[];
-  swaps: Record<string, string>; // original normalized ingredient name -> replacement ingredient name
+  swaps: Record<string, string[]>; // original normalized ingredient name -> selected replacement ingredient name(s)
+}
+
+export function normalizeSwapsRecord(rawSwaps: unknown): Record<string, string[]> {
+  if (!rawSwaps || typeof rawSwaps !== 'object' || Array.isArray(rawSwaps)) {
+    return {};
+  }
+
+  const normalized: Record<string, string[]> = {};
+  for (const [origKey, rawVal] of Object.entries(rawSwaps as Record<string, unknown>)) {
+    const cleanKey = origKey.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!cleanKey) continue;
+
+    const candidates = Array.isArray(rawVal)
+      ? rawVal
+      : typeof rawVal === 'string'
+      ? [rawVal]
+      : [];
+
+    const seen = new Set<string>();
+    const cleanList: string[] = [];
+    for (const item of candidates) {
+      if (typeof item !== 'string') continue;
+      const trimmed = item.trim().replace(/\s+/g, ' ');
+      if (!trimmed) continue;
+      const itemNorm = trimmed.toLowerCase();
+      if (seen.has(itemNorm)) continue;
+      seen.add(itemNorm);
+      cleanList.push(trimmed);
+    }
+
+    if (cleanList.length === 0) continue;
+    // A single selection identical to the original ingredient is a no-op swap
+    if (cleanList.length === 1 && cleanList[0].toLowerCase() === cleanKey) continue;
+
+    normalized[cleanKey] = cleanList;
+  }
+
+  return normalized;
 }
 
 export interface QuickSidePreset {
@@ -90,10 +128,16 @@ function getAllCustomizations(): Record<number, MealCustomization> {
 
   const result: Record<number, MealCustomization> = {};
   for (const row of rows) {
+    let parsedSwaps: unknown = {};
+    try {
+      parsedSwaps = JSON.parse(row.swaps || '{}');
+    } catch {
+      parsedSwaps = {};
+    }
     result[row.meal_id] = {
       mealId: row.meal_id,
       sides: JSON.parse(row.sides || '[]') as MealSideItem[],
-      swaps: JSON.parse(row.swaps || '{}') as Record<string, string>,
+      swaps: normalizeSwapsRecord(parsedSwaps),
     };
   }
   return result;
@@ -163,6 +207,20 @@ planRouter.put('/', (req, res) => {
   });
 });
 
+planRouter.delete('/', (_req, res) => {
+  const resetTx = db.transaction(() => {
+    db.prepare('DELETE FROM meal_plan_selections').run();
+    db.prepare('DELETE FROM meal_plan_customizations').run();
+    db.prepare('DELETE FROM meal_schedule_slots').run();
+  });
+  resetTx();
+  res.json({
+    mealIds: [],
+    customizations: {},
+    slots: [],
+  });
+});
+
 planRouter.get('/customizations', (_req, res) => {
   res.json({ customizations: getAllCustomizations() });
 });
@@ -196,18 +254,7 @@ planRouter.put('/customizations/:mealId', (req, res) => {
     });
   }
 
-  const rawSwaps =
-    req.body?.swaps && typeof req.body.swaps === 'object' && !Array.isArray(req.body.swaps)
-      ? (req.body.swaps as Record<string, unknown>)
-      : {};
-  const swaps: Record<string, string> = {};
-  for (const [origKey, replacement] of Object.entries(rawSwaps)) {
-    const cleanKey = origKey.trim().toLowerCase().replace(/\s+/g, ' ');
-    const cleanReplacement = typeof replacement === 'string' ? replacement.trim() : '';
-    if (cleanKey && cleanReplacement && cleanReplacement.toLowerCase() !== cleanKey) {
-      swaps[cleanKey] = cleanReplacement;
-    }
-  }
+  const swaps = normalizeSwapsRecord(req.body?.swaps);
 
   const saveTx = db.transaction(() => {
     // Ensure meal is selected in plan when customized
