@@ -547,8 +547,139 @@ describe('Kroger Public API Service (Phase 2)', () => {
     const alert = savings.alerts[0];
     assert.equal(alert.bestAlternative.upc, '0001111099003', 'Must exclude TEMPORARILY_OUT_OF_STOCK items');
     assert.equal(alert.bestAlternative.isOnSale, true);
+    assert.equal(alert.bestAlternative.recommendedCartQuantity, 2);
     assert.equal(alert.bestAlternative.savingsPerUnit, 2.2);
     assert.equal(alert.bestAlternative.totalSavings, 4.4);
     assert.equal(savings.totalPotentialSavings, 4.4);
+  });
+
+  it('compares Kroger alternatives by equivalent total quantity (rejects smaller worse-value packs, recommends cheaper multi-packs)', async () => {
+    const { parseProductSize } = await import('./productSize.js');
+
+    // Verify size parsing edge cases (multipacks, dual-unit labels, fractions)
+    assert.deepEqual(parseProductSize('4 pk / 5 oz')?.amount, 20);
+    assert.equal(parseProductSize('16 oz / 1 lb')?.amount, 16);
+    assert.equal(parseProductSize('1/2 gal')?.amount, 64);
+    assert.equal(parseProductSize('1/2 gal')?.dimension, 'volume');
+    assert.equal(parseProductSize('12 ct / 12 fl oz')?.amount, 144);
+
+    kroger.saveStore({
+      locationId: '01400376',
+      name: 'Kroger Downtown',
+      address: '100 E Court St',
+      zip: '45202',
+    });
+
+    // Item 1: 19 oz Tortellini @ $4.49 (cart qty 1) — candidate 9 oz @ $3.89 must NOT be suggested
+    kroger.upsertProductMapping({
+      normalizedName: 'cheese tortellini',
+      upc: '0001111088001',
+      productId: 'p-tort-19',
+      description: 'Family Size Cheese Tortellini',
+      brand: 'Private Selection',
+      size: '19 oz',
+      imageUrl: '',
+      lastPrice: 4.49,
+      promoPrice: null,
+    });
+    db.prepare(
+      `INSERT INTO grocery_list_items (
+        name, normalized_name, unit_breakdown, sources, is_checked, is_ad_hoc, cart_quantity
+      ) VALUES ('Cheese Tortellini', 'cheese tortellini', '[{"quantity":1,"unit":"pack"}]', '["Pasta Night"]', 0, 0, 1)`
+    ).run();
+
+    // Item 2: 10 oz Canned Chicken @ $2.49 (cart qty 1)
+    // Candidate A: 5 oz @ $1.39 (2 cans = $2.78 -> NOT cheaper)
+    // Candidate B: 5 oz @ $1.09 (2 cans = $2.18 -> CHEAPER by $0.31, recommendedCartQuantity = 2!)
+    kroger.upsertProductMapping({
+      normalizedName: 'canned chicken',
+      upc: '0001111088010',
+      productId: 'p-chk-10',
+      description: 'Kroger Chunk Chicken Breast',
+      brand: 'Kroger',
+      size: '10 oz',
+      imageUrl: '',
+      lastPrice: 2.49,
+      promoPrice: null,
+    });
+    db.prepare(
+      `INSERT INTO grocery_list_items (
+        name, normalized_name, unit_breakdown, sources, is_checked, is_ad_hoc, cart_quantity
+      ) VALUES ('Canned Chicken', 'canned chicken', '[{"quantity":1,"unit":"can"}]', '["Chicken Salad"]', 0, 0, 1)`
+    ).run();
+
+    globalThis.fetch = (async (url) => {
+      const u = String(url);
+      if (u.endsWith('/connect/oauth2/token')) {
+        return new Response(JSON.stringify({ access_token: 'cc-tok', expires_in: 1800 }), { status: 200 });
+      }
+      if (u.includes('Cheese+Tortellini')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                productId: 'p-tort-19',
+                upc: '0001111088001',
+                description: 'Family Size Cheese Tortellini',
+                brand: 'Private Selection',
+                items: [{ size: '19 oz', price: { regular: 4.49 }, inventory: { stockLevel: 'HIGH' } }],
+              },
+              {
+                productId: 'p-tort-9',
+                upc: '0001111088002',
+                description: 'Small Cheese Tortellini',
+                brand: 'Brand X',
+                items: [{ size: '9 oz', price: { regular: 3.89 }, inventory: { stockLevel: 'HIGH' } }],
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+      if (u.includes('Canned+Chicken')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                productId: 'p-chk-10',
+                upc: '0001111088010',
+                description: 'Kroger Chunk Chicken Breast',
+                brand: 'Kroger',
+                items: [{ size: '10 oz', price: { regular: 2.49 }, inventory: { stockLevel: 'HIGH' } }],
+              },
+              {
+                productId: 'p-chk-5-worse',
+                upc: '0001111088011',
+                description: 'Small Canned Chicken (Worse Unit Deal)',
+                brand: 'Brand A',
+                items: [{ size: '5 oz', price: { regular: 1.39 }, inventory: { stockLevel: 'HIGH' } }],
+              },
+              {
+                productId: 'p-chk-5-better',
+                upc: '0001111088012',
+                description: 'Sale Small Canned Chicken',
+                brand: 'Brand B',
+                items: [{ size: '5 oz', price: { regular: 1.49, promo: 1.09 }, inventory: { stockLevel: 'HIGH' } }],
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as typeof fetch;
+
+    const savings = await kroger.checkCheaperAlternativesForGroceryList();
+    assert.equal(savings.checkedCount, 2);
+    // Tortellini 9 oz @ $3.89 must NOT produce an alert; only Canned Chicken 2 × 5 oz @ $1.09 should!
+    assert.equal(savings.alerts.length, 1);
+    const chickenAlert = savings.alerts[0];
+    assert.equal(chickenAlert.normalizedName, 'canned chicken');
+    assert.equal(chickenAlert.bestAlternative.upc, '0001111088012');
+    assert.equal(chickenAlert.bestAlternative.recommendedCartQuantity, 2);
+    assert.equal(chickenAlert.bestAlternative.totalAlternativeCost, 2.18);
+    assert.equal(chickenAlert.bestAlternative.currentTotalCost, 2.49);
+    assert.equal(chickenAlert.bestAlternative.totalSavings, 0.31);
+    assert.equal(chickenAlert.otherAlternatives.length, 0, '5 oz @ $1.39 must be excluded');
   });
 });

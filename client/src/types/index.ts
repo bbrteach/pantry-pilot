@@ -209,6 +209,9 @@ export interface CheaperAlternativeOption {
   effectivePrice: number;
   isOnSale: boolean;
   stockLevel: string;
+  recommendedCartQuantity?: number;
+  totalAlternativeCost?: number;
+  currentTotalCost?: number;
   savingsPerUnit: number;
   totalSavings: number;
   savingsPercent: number;

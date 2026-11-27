@@ -429,15 +429,46 @@ export function GroceryListView({
                             <Sparkles className="w-3 h-3" />
                             {alt.isOnSale ? 'On-sale alternative:' : 'Cheaper brand:'}
                           </span>{' '}
-                          <span className="font-semibold text-[#1A241E]">{alt.description}</span>
-                          {alt.size ? <span className="text-[#5C6961]"> ({alt.size})</span> : null}{' '}
-                          <span className="font-bold text-[#B85D2B] tabular-nums">
-                            ${alt.effectivePrice.toFixed(2)}
-                          </span>{' '}
-                          <span className="text-[#874823] tabular-nums">
-                            vs. ${savingsAlert.currentProduct.effectivePrice.toFixed(2)} (Save $
-                            {alt.totalSavings.toFixed(2)})
+                          <span className="font-semibold text-[#1A241E]">
+                            {alt.recommendedCartQuantity &&
+                            alt.recommendedCartQuantity !== savingsAlert.cartQuantity
+                              ? `${alt.recommendedCartQuantity} × `
+                              : ''}
+                            {alt.description}
                           </span>
+                          {alt.size ? <span className="text-[#5C6961]"> ({alt.size})</span> : null}{' '}
+                          {alt.recommendedCartQuantity &&
+                          alt.recommendedCartQuantity !== savingsAlert.cartQuantity ? (
+                            <>
+                              <span className="font-bold text-[#B85D2B] tabular-nums">
+                                ${alt.effectivePrice.toFixed(2)} ea ($
+                                {(
+                                  alt.totalAlternativeCost ??
+                                  alt.effectivePrice * alt.recommendedCartQuantity
+                                ).toFixed(2)}{' '}
+                                total)
+                              </span>{' '}
+                              <span className="text-[#874823] tabular-nums">
+                                vs. $
+                                {(
+                                  alt.currentTotalCost ??
+                                  savingsAlert.currentProduct.effectivePrice *
+                                    savingsAlert.cartQuantity
+                                ).toFixed(2)}{' '}
+                                (Save ${alt.totalSavings.toFixed(2)})
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-bold text-[#B85D2B] tabular-nums">
+                                ${alt.effectivePrice.toFixed(2)}
+                              </span>{' '}
+                              <span className="text-[#874823] tabular-nums">
+                                vs. ${savingsAlert.currentProduct.effectivePrice.toFixed(2)} (Save $
+                                {alt.totalSavings.toFixed(2)})
+                              </span>
+                            </>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button

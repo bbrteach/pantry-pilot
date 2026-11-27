@@ -118,26 +118,13 @@ export function MealsView({
   );
 
   const sourceOptions = useMemo(() => {
-    const liveSources = new Set<string>();
-    let hasCurated = false;
+    const sources = new Set<string>();
     for (const idea of mealIdeas) {
-      if (idea.isLive && idea.sourceName) {
-        liveSources.add(idea.sourceName);
-      } else {
-        hasCurated = true;
+      if (idea.sourceName) {
+        sources.add(idea.sourceName);
       }
     }
-    const opts: string[] = ['All'];
-    if (liveSources.size > 0) {
-      opts.push('Live Web');
-      for (const s of Array.from(liveSources).sort((a, b) => a.localeCompare(b))) {
-        opts.push(s);
-      }
-    }
-    if (hasCurated) {
-      opts.push('Curated');
-    }
-    return opts;
+    return ['All', ...Array.from(sources).sort((a, b) => a.localeCompare(b))];
   }, [mealIdeas]);
 
   const allTags = useMemo(() => {
@@ -185,15 +172,7 @@ export function MealsView({
     const q = ideaSearch.trim().toLowerCase();
     return ideasWithStatus.filter((idea) => {
       if (hideAddedIdeas && idea.inLibrary) return false;
-
-      if (selectedSource === 'Live Web' && !idea.isLive) return false;
-      if (selectedSource === 'Curated' && idea.isLive) return false;
-      if (
-        selectedSource !== 'All' &&
-        selectedSource !== 'Live Web' &&
-        selectedSource !== 'Curated' &&
-        idea.sourceName !== selectedSource
-      ) {
+      if (selectedSource !== 'All' && idea.sourceName !== selectedSource) {
         return false;
       }
 
@@ -289,9 +268,9 @@ export function MealsView({
           </h1>
           <p className="text-sm text-[#5C6961] mt-1">
             {subTab === 'ideas'
-              ? liveIdeasCount > 0
-                ? `${liveIdeasCount} live web recipes & ${availableIdeasCount} total ideas ready to add in one tap`
-                : `${availableIdeasCount} fresh dinner ${availableIdeasCount === 1 ? 'idea' : 'ideas'} ready to add to your library in one tap`
+              ? refreshingIdeas && mealIdeas.length === 0
+                ? 'Fetching live dinner recipes from recipe websites...'
+                : `${availableIdeasCount} live web ${availableIdeasCount === 1 ? 'recipe' : 'recipes'} ready to add to your library in one tap`
               : `${meals.length} saved family ${meals.length === 1 ? 'meal' : 'meals'} ready for planning`}
           </p>
         </div>
@@ -599,7 +578,7 @@ export function MealsView({
                   {refreshingIdeas
                     ? 'Pulling fresh recipes from recipe websites...'
                     : liveIdeasCount > 0
-                    ? `Live Recipes (${liveIdeasCount}) + Curated Classics`
+                    ? `${liveIdeasCount} Live Recipes Ready to Browse`
                     : 'Live Recipe Discovery'}
                 </p>
                 <p className="text-xs text-[#5C6961] mt-0.5">
@@ -778,22 +757,43 @@ export function MealsView({
             </div>
           </div>
 
-          {filteredIdeas.length === 0 ? (
+          {mealIdeas.length === 0 && refreshingIdeas ? (
+            <div className="rounded-3xl bg-white border border-[#E6E1D6] p-12 flex flex-col items-center justify-center text-center gap-3">
+              <div className="w-8 h-8 rounded-full border-3 border-[#C4DDD0] border-t-[#1B5E42] animate-spin" />
+              <p className="text-sm font-semibold text-[#1A241E]">
+                Fetching fresh recipes from recipe websites...
+              </p>
+              <p className="text-xs text-[#5C6961] max-w-xs">
+                Pulling the latest dinners from Budget Bytes, Skinnytaste, Pinch of Yum, RecipeTin Eats, Natasha&apos;s Kitchen &amp; TheMealDB.
+              </p>
+            </div>
+          ) : filteredIdeas.length === 0 ? (
             <div className="rounded-3xl bg-white border border-[#E6E1D6] p-10 text-center">
               <div className="w-12 h-12 rounded-2xl bg-[#FDF3EB] text-[#B85D2B] mx-auto flex items-center justify-center mb-3">
                 <Sparkles className="w-6 h-6" />
               </div>
               <h2 className="text-base font-bold text-[#1A241E]">
-                {availableIdeasCount === 0 && hideAddedIdeas
+                {mealIdeas.length > 0 && availableIdeasCount === 0 && hideAddedIdeas
                   ? 'All loaded meal ideas are in your library!'
-                  : 'No matching meal ideas loaded yet'}
+                  : 'No matching live recipes yet'}
               </h2>
               <p className="text-sm text-[#5C6961] mt-1 max-w-sm mx-auto">
                 {ideaSearch.trim().length >= 2
-                  ? `Search online recipes for "${ideaSearch.trim()}" or clear your filters to browse all ideas.`
-                  : 'Try refreshing for fresh web recipes or clearing your current filters.'}
+                  ? `Search online recipes for "${ideaSearch.trim()}" or clear your filters to browse all live recipes.`
+                  : 'Tap Refresh Ideas to pull fresh recipes from the web or clear your filters.'}
               </p>
               <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+                {mealIdeas.length === 0 && (
+                  <button
+                    type="button"
+                    disabled={refreshingIdeas}
+                    onClick={() => void onRefreshMealIdeas()}
+                    className="h-10 px-4 rounded-xl text-sm font-semibold bg-[#1B5E42] text-white hover:bg-[#144A33] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${refreshingIdeas ? 'animate-spin' : ''}`} />
+                    Refresh Ideas
+                  </button>
+                )}
                 {ideaSearch.trim().length >= 2 && (
                   <button
                     type="button"
@@ -877,7 +877,7 @@ export function MealsView({
                               ) : (
                                 <Sparkles className="w-2.5 h-2.5" />
                               )}
-                              {idea.sourceName || 'Curated'}
+                              {idea.sourceName || 'Web Recipe'}
                             </span>
                             {idea.sourceUrl && (
                               <a

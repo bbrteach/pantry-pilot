@@ -1056,14 +1056,24 @@ export function KrogerView({
                                 : 'Cheaper brand: '}
                             </span>
                             <span className="font-semibold text-[#1A241E]">
+                              {alert.bestAlternative.recommendedCartQuantity &&
+                              alert.bestAlternative.recommendedCartQuantity !== alert.cartQuantity
+                                ? `${alert.bestAlternative.recommendedCartQuantity} × `
+                                : ''}
                               {alert.bestAlternative.description}
                             </span>
                             {alert.bestAlternative.size && (
                               <span className="text-[#5C6961]"> · {alert.bestAlternative.size}</span>
                             )}
                             <span className="ml-1.5 font-bold text-[#1B5E42] tabular-nums">
-                              ${alert.bestAlternative.effectivePrice.toFixed(2)} (save $
-                              {alert.bestAlternative.totalSavings.toFixed(2)})
+                              {alert.bestAlternative.recommendedCartQuantity &&
+                              alert.bestAlternative.recommendedCartQuantity !== alert.cartQuantity
+                                ? `$${alert.bestAlternative.effectivePrice.toFixed(2)} ea ($${(
+                                    alert.bestAlternative.totalAlternativeCost ??
+                                    alert.bestAlternative.effectivePrice *
+                                      alert.bestAlternative.recommendedCartQuantity
+                                  ).toFixed(2)} total · save $${alert.bestAlternative.totalSavings.toFixed(2)})`
+                                : `$${alert.bestAlternative.effectivePrice.toFixed(2)} (save $${alert.bestAlternative.totalSavings.toFixed(2)})`}
                             </span>
                           </div>
                           <button

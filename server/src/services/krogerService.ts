@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
 import { config } from '../config.js';
 import { db } from '../db/database.js';
+import {
+  compareAlternativeForSameQuantity,
+  parseProductSize,
+} from './productSize.js';
 
 export type FulfillmentModality = 'PICKUP' | 'DELIVERY';
 
@@ -80,6 +84,9 @@ export interface CheaperAlternativeOption {
   effectivePrice: number;
   isOnSale: boolean;
   stockLevel: string;
+  recommendedCartQuantity: number;
+  totalAlternativeCost: number;
+  currentTotalCost: number;
   savingsPerUnit: number;
   totalSavings: number;
   savingsPercent: number;
@@ -1027,12 +1034,19 @@ export async function checkCheaperAlternativesForGroceryList(): Promise<{
           const candidates = await searchProducts(row.item_name, store.locationId, 8);
           if (candidates.length === 0) return null;
 
-          // Update current product's live price if present in search results
+          // Update current product's live price and size if present in search results
           const liveCurrent = candidates.find((c) => c.upc === row.upc);
           const curRegular = liveCurrent?.regularPrice ?? row.last_price;
           const curPromo = liveCurrent?.promoPrice ?? row.promo_price;
+          const curSizeStr = liveCurrent?.size || row.size || '';
           const curEffective = getEffectivePrice(curRegular, curPromo);
           if (curEffective === null) return null;
+
+          const curParsedSize = parseProductSize(
+            curSizeStr,
+            liveCurrent?.description || row.description
+          );
+          if (!curParsedSize) return null;
 
           const qty = Math.max(1, row.cart_quantity || 1);
           const cheaperOptions: CheaperAlternativeOption[] = [];
@@ -1043,8 +1057,16 @@ export async function checkCheaperAlternativesForGroceryList(): Promise<{
             const eff = getEffectivePrice(cand.regularPrice, cand.promoPrice);
             if (eff === null) continue;
 
-            const savingsPerUnit = roundMoney(curEffective - eff);
-            if (savingsPerUnit < 0.1) continue;
+            const candParsedSize = parseProductSize(cand.size, cand.description);
+            const comparison = compareAlternativeForSameQuantity({
+              currentSize: curParsedSize,
+              currentEffectivePrice: curEffective,
+              currentCartQuantity: qty,
+              candidateSize: candParsedSize,
+              candidateEffectivePrice: eff,
+              minTotalSavings: 0.1,
+            });
+            if (!comparison) continue;
 
             const isOnSale =
               cand.promoPrice !== null &&
@@ -1064,9 +1086,12 @@ export async function checkCheaperAlternativesForGroceryList(): Promise<{
               effectivePrice: eff,
               isOnSale,
               stockLevel: cand.stockLevel,
-              savingsPerUnit,
-              totalSavings: roundMoney(savingsPerUnit * qty),
-              savingsPercent: Math.max(1, Math.round((savingsPerUnit / curEffective) * 100)),
+              recommendedCartQuantity: comparison.recommendedCartQuantity,
+              totalAlternativeCost: comparison.candidateTotalCost,
+              currentTotalCost: comparison.currentTotalCost,
+              savingsPerUnit: comparison.savingsPerCurrentUnit,
+              totalSavings: comparison.totalSavings,
+              savingsPercent: comparison.savingsPercent,
             });
           }
 
@@ -1074,7 +1099,7 @@ export async function checkCheaperAlternativesForGroceryList(): Promise<{
 
           cheaperOptions.sort(
             (a, b) =>
-              b.savingsPerUnit - a.savingsPerUnit || Number(b.isOnSale) - Number(a.isOnSale)
+              b.totalSavings - a.totalSavings || Number(b.isOnSale) - Number(a.isOnSale)
           );
 
           return {
@@ -1086,7 +1111,7 @@ export async function checkCheaperAlternativesForGroceryList(): Promise<{
               upc: row.upc,
               description: row.description,
               brand: row.brand,
-              size: row.size,
+              size: curSizeStr,
               regularPrice: curRegular,
               promoPrice: curPromo,
               effectivePrice: curEffective,

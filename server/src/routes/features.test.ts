@@ -580,75 +580,22 @@ describe('Manual Ingredient Alternatives & Individual Staple Add-to-List', () =>
     assert.equal(badRes.status, 400);
   });
 
-  it('lists curated meal ideas and instantly adds an idea into the meal library', async () => {
+  it('returns empty stale feed before first live refresh and rejects unknown idea IDs', async () => {
     const ideasRes = await apiJson<{
-      ideas: Array<{
-        id: string;
-        name: string;
-        prepTime: string;
-        tags: string[];
-        ingredients: Array<{ name: string; quantity: number; unit: string; alternatives?: string[] }>;
-        inLibrary: boolean;
-      }>;
+      ideas: Array<{ id: string }>;
       stale: boolean;
       liveCount: number;
     }>('/api/meals/ideas');
 
     assert.equal(ideasRes.status, 200);
-    assert.ok(ideasRes.data.ideas.length >= 20, 'Expected a rich catalog of meal ideas');
+    assert.equal(ideasRes.data.ideas.length, 0);
+    assert.equal(ideasRes.data.liveCount, 0);
     assert.equal(ideasRes.data.stale, true);
-    const firstIdea = ideasRes.data.ideas[0];
-    assert.equal(firstIdea.inLibrary, false);
-    assert.ok(firstIdea.ingredients.length > 0);
-    assert.ok(firstIdea.prepTime.length > 0);
 
-    // Instant add to meal library
-    const addRes = await apiJson<{
-      id: number;
-      name: string;
-      tags: string[];
-      ingredients: Array<{ name: string; alternatives: string[] }>;
-    }>(`/api/meals/ideas/${encodeURIComponent(firstIdea.id)}/add`, {
-      method: 'POST',
-    });
-
-    assert.equal(addRes.status, 201);
-    assert.equal(addRes.data.name, firstIdea.name);
-    assert.deepEqual(addRes.data.tags, firstIdea.tags);
-    assert.equal(addRes.data.ingredients.length, firstIdea.ingredients.length);
-
-    // Idea is now marked inLibrary
-    const refreshedIdeas = await apiJson<{ ideas: Array<{ id: string; inLibrary: boolean }> }>(
-      '/api/meals/ideas'
-    );
-    assert.equal(refreshedIdeas.status, 200);
-    assert.equal(
-      refreshedIdeas.data.ideas.find((idea) => idea.id === firstIdea.id)?.inLibrary,
-      true
-    );
-
-    // Duplicate add returns 409 Conflict
-    const dupRes = await apiJson<{ error: string }>(
-      `/api/meals/ideas/${encodeURIComponent(firstIdea.id)}/add`,
-      { method: 'POST' }
-    );
-    assert.equal(dupRes.status, 409);
-
-    // Unknown idea returns 404
     const missingRes = await apiJson<{ error: string }>('/api/meals/ideas/does-not-exist/add', {
       method: 'POST',
     });
     assert.equal(missingRes.status, 404);
-
-    // Deleting meal from library makes idea addable again
-    await apiJson(`/api/meals/${addRes.data.id}`, { method: 'DELETE' });
-    const afterDeleteIdeas = await apiJson<{ ideas: Array<{ id: string; inLibrary: boolean }> }>(
-      '/api/meals/ideas'
-    );
-    assert.equal(
-      afterDeleteIdeas.data.ideas.find((idea) => idea.id === firstIdea.id)?.inLibrary,
-      false
-    );
   });
 
   it('parses recipe ingredient lines and Schema.org JSON-LD recipe pages accurately', () => {

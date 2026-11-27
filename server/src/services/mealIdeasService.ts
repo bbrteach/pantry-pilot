@@ -1,5 +1,5 @@
 import { db } from '../db/database.js';
-import { MEAL_IDEA_CATALOG, type MealIdeaIngredient } from '../data/mealIdeas.js';
+import type { MealIdeaIngredient } from '../data/mealIdeas.js';
 import { normalizeIngredientName } from './consolidation.js';
 import {
   cleanRecipeUrl,
@@ -44,29 +44,29 @@ export const RECIPE_FEED_SOURCES: FeedSourceConfig[] = [
   {
     name: 'Budget Bytes',
     feedUrl: 'https://www.budgetbytes.com/category/recipes/main-dish/feed/',
-    maxItems: 3,
+    maxItems: 5,
     defaultTags: ['Budget'],
   },
   {
     name: 'Skinnytaste',
     feedUrl: 'https://www.skinnytaste.com/recipes/dinner-recipes/feed/',
-    maxItems: 3,
+    maxItems: 5,
     defaultTags: ['Healthy'],
   },
   {
     name: 'Pinch of Yum',
     feedUrl: 'https://pinchofyum.com/recipes/dinner/feed',
-    maxItems: 3,
+    maxItems: 5,
   },
   {
     name: 'RecipeTin Eats',
     feedUrl: 'https://www.recipetineats.com/category/main-dishes/feed/',
-    maxItems: 3,
+    maxItems: 5,
   },
   {
     name: "Natasha's Kitchen",
     feedUrl: 'https://natashaskitchen.com/category/main-course/feed/',
-    maxItems: 3,
+    maxItems: 5,
   },
 ];
 
@@ -197,28 +197,6 @@ export function getMealIdeasFeed(): MealIdeasFeedResponse {
     .all() as CachedIdeaRow[];
 
   const liveIdeas = cachedRows.map((row) => parseCachedRow(row, existingNames));
-  const seenNames = new Set(liveIdeas.map((i) => normalizeIngredientName(i.name)));
-
-  const curatedIdeas: MealIdeaItem[] = [];
-  for (const idea of MEAL_IDEA_CATALOG) {
-    const norm = normalizeIngredientName(idea.name);
-    if (seenNames.has(norm)) continue;
-    seenNames.add(norm);
-    curatedIdeas.push({
-      id: idea.id,
-      name: idea.name,
-      notes: idea.notes,
-      prepTime: idea.prepTime,
-      tags: idea.tags,
-      imageUrl: '',
-      sourceName: 'Curated',
-      sourceUrl: '',
-      isLive: false,
-      publishedAt: '',
-      ingredients: idea.ingredients,
-      inLibrary: existingNames.has(norm),
-    });
-  }
 
   const lastRefreshedAt = getLastRefreshedAt();
   const lastTs = lastRefreshedAt ? Date.parse(lastRefreshedAt) : NaN;
@@ -231,12 +209,9 @@ export function getMealIdeasFeed(): MealIdeasFeedResponse {
   for (const item of liveIdeas) {
     if (item.sourceName) sourceSet.add(item.sourceName);
   }
-  if (curatedIdeas.length > 0) {
-    sourceSet.add('Curated');
-  }
 
   return {
-    ideas: [...liveIdeas, ...curatedIdeas],
+    ideas: liveIdeas,
     lastRefreshedAt,
     stale,
     liveCount: liveIdeas.length,
@@ -255,27 +230,8 @@ export function findMealIdeaById(ideaId: string): MealIdeaItem | null {
     )
     .get(ideaId) as CachedIdeaRow | undefined;
 
-  if (cached) {
-    return parseCachedRow(cached, existingNames);
-  }
-
-  const curated = MEAL_IDEA_CATALOG.find((entry) => entry.id === ideaId);
-  if (!curated) return null;
-
-  return {
-    id: curated.id,
-    name: curated.name,
-    notes: curated.notes,
-    prepTime: curated.prepTime,
-    tags: curated.tags,
-    imageUrl: '',
-    sourceName: 'Curated',
-    sourceUrl: '',
-    isLive: false,
-    publishedAt: '',
-    ingredients: curated.ingredients,
-    inLibrary: existingNames.has(normalizeIngredientName(curated.name)),
-  };
+  if (!cached) return null;
+  return parseCachedRow(cached, existingNames);
 }
 
 async function fetchSingleFeedSource(source: FeedSourceConfig): Promise<ParsedWebRecipe[]> {
@@ -365,7 +321,7 @@ export async function refreshLiveMealIdeas(): Promise<MealIdeasFeedResponse> {
     try {
       const [feedGroups, mealDbRecipes] = await Promise.all([
         Promise.all(RECIPE_FEED_SOURCES.map((src) => fetchSingleFeedSource(src))),
-        fetchRotatingTheMealDbRecipes(6),
+        fetchRotatingTheMealDbRecipes(8),
       ]);
 
       // Interleave recipes across sources so the top of the Meal Ideas grid has rich variety

@@ -661,6 +661,13 @@ export function App() {
       lastPrice: alt.regularPrice,
       promoPrice: alt.promoPrice,
     });
+    const nextCartQty =
+      typeof alt.recommendedCartQuantity === 'number' && alt.recommendedCartQuantity >= 1
+        ? alt.recommendedCartQuantity
+        : item.cartQuantity;
+    if (nextCartQty !== item.cartQuantity) {
+      await api.updateGroceryItem(item.id, { cartQuantity: nextCartQty });
+    }
     const refreshed = await api.getGroceryList();
     setGroceryItems(refreshed);
     setSavingsData((prev) => {
@@ -671,7 +678,8 @@ export function App() {
       );
       return { ...prev, alerts, totalPotentialSavings };
     });
-    showToast(`Switched "${item.name}" → ${alt.description}`);
+    const qtyPrefix = nextCartQty !== item.cartQuantity ? `${nextCartQty} × ` : '';
+    showToast(`Switched "${item.name}" → ${qtyPrefix}${alt.description}`);
   };
 
   const handleSaveAndPlanNewIdea = async (idea: NewMealDealSuggestion) => {
